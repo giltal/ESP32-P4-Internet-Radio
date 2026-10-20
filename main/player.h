@@ -40,6 +40,9 @@ typedef struct {
 esp_err_t player_init(void);
 void player_play(const station_t *st);
 void player_stop(void);
+
+/** Song title from the station's website ("Artist - Title"); ignored if the stream sends its own. */
+void player_set_web_title(const char *station_url, const char *title);
 void player_set_volume(int volume);
 int player_get_volume(void);
 /** Persist the current volume (call when the user lets go of the slider). */

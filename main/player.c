@@ -13,6 +13,7 @@
 #include "esp_http_client.h"
 #include "esp_crt_bundle.h"
 #include "sdcard.h"
+#include "nowplaying.h"
 #include "esp_audio_dec_default.h"
 #include "esp_audio_simple_dec.h"
 #include "esp_audio_simple_dec_default.h"
@@ -52,6 +53,7 @@ static volatile uint32_t s_data_session;    /* session whose data the ring holds
 static volatile esp_audio_simple_dec_type_t s_dec_type;
 static TaskHandle_t s_reader;
 static int s_volume = 60;
+static volatile bool s_icy_has_title;      /* the stream sends its own (non-empty) titles */
 
 /* ------------------------------------------------------------------ */
 /* Status helpers                                                      */
@@ -198,6 +200,10 @@ static void handle_icy_metadata(uint32_t sess, const char *meta, size_t len)
         t[--tl] = 0;
     }
     ESP_LOGI(TAG, "title: %s", t);
+    s_icy_has_title = t[0] != 0;
+    if (!t[0] && s_st.title[0]) {
+        return;     /* empty StreamTitle: keep a title from the station's website */
+    }
     status_set_title(sess, t);
 }
 
@@ -798,10 +804,25 @@ void player_play(const station_t *st)
     strlcpy(s_st.codec, st->codec, sizeof(s_st.codec));
     s_st.bitrate_kbps = st->bitrate;
     s_st.revision = s_session * 1000;
+    s_icy_has_title = false;
     xSemaphoreGive(s_lock);
     xTaskNotifyGive(s_reader);
+    nowplaying_track(st);
 
     sdcard_save("last.bin", st, sizeof(*st));
+}
+
+void player_set_web_title(const char *station_url, const char *title)
+{
+    if (s_icy_has_title) {
+        return;     /* in-stream metadata is more precise */
+    }
+    xSemaphoreTake(s_lock, portMAX_DELAY);
+    bool same = s_req_play && strcmp(s_req.url, station_url) == 0;
+    xSemaphoreGive(s_lock);
+    if (same) {
+        status_set_title(s_session, title);
+    }
 }
 
 void player_stop(void)
@@ -816,6 +837,7 @@ void player_stop(void)
     s_st.revision++;
     xSemaphoreGive(s_lock);
     xTaskNotifyGive(s_reader);
+    nowplaying_track(NULL);
 }
 
 void player_set_volume(int volume)

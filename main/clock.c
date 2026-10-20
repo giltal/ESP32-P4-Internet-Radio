@@ -26,7 +26,7 @@ static uint8_t bcd2dec(uint8_t b) { return (b >> 4) * 10 + (b & 0x0F); }
 static uint8_t dec2bcd(int d)     { return (uint8_t)(((d / 10) << 4) | (d % 10)); }
 
 /* UTC broken-down time -> epoch (newlib has no timegm) */
-static time_t utc_to_epoch(const struct tm *t)
+time_t clock_utc_to_epoch(const struct tm *t)
 {
     int y = t->tm_year + 1900, m = t->tm_mon + 1, d = t->tm_mday;
     y -= m <= 2;
@@ -97,7 +97,7 @@ esp_err_t clock_init(i2c_master_bus_handle_t bus)
     };
     bool sane = !(flag & FLAG_VLF) && t.tm_mon >= 0 && t.tm_mon < 12 && t.tm_mday >= 1 && t.tm_mday <= 31 &&
                 t.tm_hour < 24 && t.tm_min < 60 && t.tm_sec < 60;
-    time_t epoch = sane ? utc_to_epoch(&t) : 0;
+    time_t epoch = sane ? clock_utc_to_epoch(&t) : 0;
     if (epoch >= VALID_EPOCH) {
         set_system_time(epoch);
         ESP_LOGI(TAG, "time from RTC: %04d-%02d-%02d %02d:%02d:%02d UTC",

@@ -16,6 +16,9 @@ extern "C" {
 /** Set the time zone and load the system time from the RTC (call before the UI). */
 esp_err_t clock_init(i2c_master_bus_handle_t bus);
 
+/** UTC broken-down time -> epoch seconds (newlib has no timegm). */
+time_t clock_utc_to_epoch(const struct tm *utc);
+
 /** True once the time came from the RTC, the network or the user. */
 bool clock_is_valid(void);
 

@@ -5,6 +5,7 @@ idf_component_register(
         "byte_ring.c"
         "clock.c"
         "logo.c"
+        "nowplaying.c"
         "player.c"
         "sdcard.c"
         "station_db.c"
