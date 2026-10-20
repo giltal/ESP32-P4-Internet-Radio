@@ -6,7 +6,7 @@ Stations come from [radio-browser.info](https://www.radio-browser.info), filtere
 
 ## Features
 
-- Station directory from radio-browser.info for one country, sorted by popularity. It keeps only plain **MP3 / AAC / HE-AAC** streams (no HLS), removes duplicates, caches the list in NVS and refreshes it daily.
+- Station directory from radio-browser.info for one country, sorted by popularity. It keeps only plain **MP3 / AAC / HE-AAC** streams (no HLS), removes duplicates, caches the list on the SD card and refreshes it daily.
 - **Favorites** tab, last station resumed at boot, prev / next buttons.
 - Streaming over HTTP and HTTPS (certificate bundle). It follows **redirects** (needed for StreamTheWorld / Kan), resolves `.pls` / `.m3u` playlists, and accepts Shoutcast `ICY 200` responses.
 - **ICY "now playing"** titles. Legacy Windows-1255 (Hebrew) and Windows-1251 (Russian) titles are converted to UTF-8.
@@ -73,8 +73,9 @@ idf.py -D SDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.defaults.p4rev3" set-
 | File | Purpose |
 |---|---|
 | `main/board.c` | JD9165 panel (both init tables), GT911 touch, LVGL port, backlight, I2S + ES8311 |
-| `main/wifi_mgr.c` | Wi-Fi via esp_hosted / esp_wifi_remote, NVS credentials, scan, SNTP (Israel time zone) |
-| `main/station_db.c` | radio-browser.info download, filtering, NVS cache, favorites |
+| `main/wifi_mgr.c` | Wi-Fi via esp_hosted / esp_wifi_remote, credentials in RAM, scan, SNTP (Israel time zone) |
+| `main/station_db.c` | radio-browser.info download, filtering, SD-card cache, favorites |
+| `main/sdcard.c` | microSD (kept mounted next to the C6 link): `WiFi.txt` and all saved settings |
 | `main/player.c` | HTTP reader (redirects, playlists, ICY metadata) → ring buffer → MP3/AAC decoder → codec |
 | `main/byte_ring.c` | Resettable PSRAM byte ring buffer |
 | `main/ui.c` | LVGL UI: station lists, now-playing card, settings overlay |

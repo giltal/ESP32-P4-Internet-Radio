@@ -26,8 +26,11 @@ typedef enum {
     STATION_LIST_FAVORITES,
 } station_list_t;
 
-/** Load the cached directory and favorites from NVS. */
+/** Allocate the in-memory lists (empty until station_db_load()). */
 esp_err_t station_db_init(void);
+
+/** Load the cached directory and favorites from the SD card (after sdcard_mount()). */
+void station_db_load(void);
 
 /** Download a fresh directory (blocking; call from a worker task). */
 esp_err_t station_db_refresh(void);

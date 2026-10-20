@@ -1,6 +1,6 @@
 /*
  * Wi-Fi station via the on-board ESP32-C6 (esp_hosted + esp_wifi_remote).
- * Credentials live in NVS; menuconfig values are only the first-boot default.
+ * Credentials come from WiFi.txt on the SD card (or the menuconfig default) and stay in RAM.
  */
 #pragma once
 
@@ -26,12 +26,6 @@ typedef struct {
     bool secure;
 } wifi_ap_info_t;
 
-/**
- * Store credentials in NVS before wifi_mgr_start() (e.g. from the SD card).
- * NVS is only written when they differ from what is already saved.
- */
-esp_err_t wifi_mgr_preset(const char *ssid, const char *password);
-
 esp_err_t wifi_mgr_start(void);
 
 wifi_state_t wifi_mgr_state(void);
@@ -41,7 +35,7 @@ bool wifi_mgr_wait_connected(uint32_t timeout_ms);
 void wifi_mgr_ssid(char *buf, size_t len);
 int wifi_mgr_rssi(void);
 
-/** Save credentials and reconnect. */
+/** Switch to these credentials (kept in RAM; the caller persists them to the SD card). */
 esp_err_t wifi_mgr_connect(const char *ssid, const char *password);
 
 /** Blocking scan; returns number of entries written (strongest first). */

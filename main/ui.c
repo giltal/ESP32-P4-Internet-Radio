@@ -6,7 +6,7 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "esp_log.h"
-#include "nvs.h"
+#include "sdcard.h"
 #include "board.h"
 #include "player.h"
 #include "station_db.h"
@@ -469,6 +469,7 @@ static void connect_btn_cb(lv_event_t *e)
         return;
     }
     wifi_mgr_connect(ssid, lv_textarea_get_text(s_pass_ta));
+    sdcard_write_wifi(ssid, lv_textarea_get_text(s_pass_ta));   /* remembered in WiFi.txt */
     lv_obj_add_flag(s_kb, LV_OBJ_FLAG_HIDDEN);
     lv_label_set_text_fmt(s_wifi_status_lbl, "Connecting to %s…", ssid);
 }
@@ -478,12 +479,7 @@ static void bl_cb(lv_event_t *e)
     int v = lv_slider_get_value(s_bl_slider);
     board_backlight_set(v);
     if (lv_event_get_code(e) == LV_EVENT_RELEASED) {
-        nvs_handle_t h;
-        if (nvs_open("radio", NVS_READWRITE, &h) == ESP_OK) {
-            nvs_set_u8(h, "bl", (uint8_t)v);
-            nvs_commit(h);
-            nvs_close(h);
-        }
+        sdcard_save_int("brightness.txt", v);
     }
 }
 
@@ -865,17 +861,24 @@ void ui_init(lv_display_t *disp)
 
     build_settings();
 
-    /* restore brightness */
-    uint8_t bl = 80;
-    nvs_handle_t h;
-    if (nvs_open("radio", NVS_READONLY, &h) == ESP_OK) {
-        nvs_get_u8(h, "bl", &bl);
-        nvs_close(h);
-    }
+    lv_slider_set_value(s_bl_slider, 80, LV_ANIM_OFF);
+    board_backlight_set(80);
+    update_now_playing_header();
+
+    lv_timer_create(tick_cb, 200, NULL);
+    ESP_LOGI(TAG, "UI ready");
+}
+
+/* Settings saved on the SD card: brightness, volume, last station. Call with the LVGL lock held. */
+void ui_load_settings(void)
+{
+    int bl = sdcard_load_int("brightness.txt", 80);
     lv_slider_set_value(s_bl_slider, bl, LV_ANIM_OFF);
     board_backlight_set(bl);
 
-    /* last station */
+    lv_slider_set_value(s_vol_slider, player_get_volume(), LV_ANIM_OFF);
+    lv_label_set_text_fmt(s_vol_lbl, "%d", player_get_volume());
+
     if (player_last_station(&s_current)) {
         s_have_current = true;
     }
@@ -883,9 +886,6 @@ void ui_init(lv_display_t *disp)
 
     /* Start on favorites if there are any */
     lv_tabview_set_active(s_tabview, station_db_count(STATION_LIST_FAVORITES) ? 0 : 1, LV_ANIM_OFF);
-
-    lv_timer_create(tick_cb, 200, NULL);
-    ESP_LOGI(TAG, "UI ready");
 }
 
 /* Called from main once Wi-Fi is up: resume the last station. */

@@ -1,8 +1,11 @@
 /*
  * ESP32-P4 Internet Radio for the Guition JC1060P470C (7" 1024x600 touch).
  *
- * Boot order: NVS -> display/UI -> audio -> Wi-Fi (ESP32-C6 over SDIO)
- *             -> station directory refresh -> resume last station.
+ * Boot order: display/UI -> audio -> Wi-Fi (ESP32-C6 over SDIO) -> SD card
+ *             -> saved settings + WiFi.txt -> station directory refresh -> resume last station.
+ *
+ * Nothing is ever written to the internal flash (it stalls PSRAM and the panel blinks):
+ * state lives in RAM and, when a card is present, in files on the SD card.
  */
 #include <string.h>
 #include "freertos/FreeRTOS.h"
@@ -22,6 +25,7 @@ static const char *TAG = "main";
 
 void app_main(void)
 {
+    /* NVS is initialised for the Wi-Fi stack only; the app never writes it */
     esp_err_t err = nvs_flash_init();
     if (err == ESP_ERR_NVS_NO_FREE_PAGES || err == ESP_ERR_NVS_NEW_VERSION_FOUND) {
         ESP_ERROR_CHECK(nvs_flash_erase());
@@ -44,14 +48,21 @@ void app_main(void)
     ui_init(disp);
     lvgl_port_unlock();
 
-    /* Wi-Fi credentials from /sdcard/WiFi.txt win over what NVS holds */
+    /* esp_hosted brings up the SDMMC host for the C6 (slot 1); the card on slot 0 joins it */
+    ESP_ERROR_CHECK(wifi_mgr_start());
+    sdcard_mount();
+
+    station_db_load();
+    player_load_settings();
+    lvgl_port_lock(0);
+    ui_load_settings();
+    lvgl_port_unlock();
+
     char ssid[33], pass[65];
     if (sdcard_read_wifi(ssid, sizeof(ssid), pass, sizeof(pass)) == ESP_OK) {
-        wifi_mgr_preset(ssid, pass);
+        wifi_mgr_connect(ssid, pass);
     }
     memset(pass, 0, sizeof(pass));
-
-    ESP_ERROR_CHECK(wifi_mgr_start());
 
     /* Wait for the network (the UI stays responsive meanwhile) */
     while (!wifi_mgr_wait_connected(60000)) {

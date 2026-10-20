@@ -10,13 +10,11 @@
 #include "esp_timer.h"
 #include "esp_netif.h"
 #include "esp_netif_sntp.h"
-#include "nvs.h"
 #include "sdkconfig.h"
 
 static const char *TAG = "wifi";
 
 #define EV_CONNECTED  BIT0
-#define NVS_NS        "wifi"
 
 static EventGroupHandle_t s_ev;
 static volatile wifi_state_t s_state = WIFI_STATE_IDLE;
@@ -32,23 +30,11 @@ static void retry_cb(void *arg)
     esp_wifi_connect();
 }
 
+/* Credentials are kept in RAM only; WiFi.txt on the SD card is the persistent copy */
 static void load_credentials(void)
 {
-    nvs_handle_t h;
-    size_t l1 = sizeof(s_ssid), l2 = sizeof(s_pass);
-    if (nvs_open(NVS_NS, NVS_READONLY, &h) == ESP_OK) {
-        if (nvs_get_str(h, "ssid", s_ssid, &l1) != ESP_OK) {
-            s_ssid[0] = 0;
-        }
-        if (nvs_get_str(h, "pass", s_pass, &l2) != ESP_OK) {
-            s_pass[0] = 0;
-        }
-        nvs_close(h);
-    }
-    if (!s_ssid[0]) {
-        strlcpy(s_ssid, CONFIG_RADIO_WIFI_SSID, sizeof(s_ssid));
-        strlcpy(s_pass, CONFIG_RADIO_WIFI_PASSWORD, sizeof(s_pass));
-    }
+    strlcpy(s_ssid, CONFIG_RADIO_WIFI_SSID, sizeof(s_ssid));
+    strlcpy(s_pass, CONFIG_RADIO_WIFI_PASSWORD, sizeof(s_pass));
 }
 
 static void apply_and_connect(void)
@@ -145,35 +131,10 @@ int wifi_mgr_rssi(void)
     return 0;
 }
 
-static void save_credentials(void)
-{
-    nvs_handle_t h;
-    if (nvs_open(NVS_NS, NVS_READWRITE, &h) == ESP_OK) {
-        nvs_set_str(h, "ssid", s_ssid);
-        nvs_set_str(h, "pass", s_pass);
-        nvs_commit(h);
-        nvs_close(h);
-    }
-}
-
-esp_err_t wifi_mgr_preset(const char *ssid, const char *password)
-{
-    load_credentials();
-    if (strcmp(s_ssid, ssid) == 0 && strcmp(s_pass, password ? password : "") == 0) {
-        return ESP_OK;              /* already stored - spare the flash */
-    }
-    strlcpy(s_ssid, ssid, sizeof(s_ssid));
-    strlcpy(s_pass, password ? password : "", sizeof(s_pass));
-    save_credentials();
-    ESP_LOGI(TAG, "stored credentials for %s", s_ssid);
-    return ESP_OK;
-}
-
 esp_err_t wifi_mgr_connect(const char *ssid, const char *password)
 {
     strlcpy(s_ssid, ssid, sizeof(s_ssid));
     strlcpy(s_pass, password ? password : "", sizeof(s_pass));
-    save_credentials();
     ESP_LOGI(TAG, "switching to %s", s_ssid);
     xEventGroupClearBits(s_ev, EV_CONNECTED);
     s_state = WIFI_STATE_CONNECTING;

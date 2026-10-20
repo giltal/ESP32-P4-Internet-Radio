@@ -12,7 +12,7 @@
 #include "esp_heap_caps.h"
 #include "esp_http_client.h"
 #include "esp_crt_bundle.h"
-#include "nvs.h"
+#include "sdcard.h"
 #include "cJSON.h"
 #include "sdkconfig.h"
 
@@ -21,7 +21,6 @@ static const char *TAG = "stations";
 #define MAX_STATIONS     CONFIG_RADIO_MAX_STATIONS
 #define MAX_FAVORITES    48
 #define MAX_JSON_BYTES   (1536 * 1024)
-#define NVS_NS           "radio"
 #define BLOB_VERSION     1
 
 /* radio-browser.info asks clients to rotate between its mirrors */
@@ -63,53 +62,35 @@ static void set_status(const char *fmt, ...)
     s_rev_status++;
 }
 
-static void save_blob(const char *key, const station_t *list, size_t n)
+/* Lists are cached on the SD card as a small header + raw station_t array */
+static void save_blob(const char *file, const station_t *list, size_t n)
 {
-    nvs_handle_t h;
-    if (nvs_open(NVS_NS, NVS_READWRITE, &h) != ESP_OK) {
-        return;
-    }
     size_t sz = 4 + n * sizeof(station_t);
     uint8_t *buf = psram_malloc(sz);
-    if (buf) {
-        buf[0] = BLOB_VERSION;
-        buf[1] = sizeof(station_t) & 0xFF;
-        buf[2] = sizeof(station_t) >> 8;
-        buf[3] = 0;
-        memcpy(buf + 4, list, n * sizeof(station_t));
-        esp_err_t err = nvs_set_blob(h, key, buf, sz);
-        if (err == ESP_OK) {
-            err = nvs_commit(h);
-        }
-        if (err != ESP_OK) {
-            ESP_LOGW(TAG, "saving %s failed: %s", key, esp_err_to_name(err));
-        }
-        free(buf);
+    if (!buf) {
+        return;
     }
-    nvs_close(h);
+    buf[0] = BLOB_VERSION;
+    buf[1] = sizeof(station_t) & 0xFF;
+    buf[2] = sizeof(station_t) >> 8;
+    buf[3] = 0;
+    memcpy(buf + 4, list, n * sizeof(station_t));
+    sdcard_save(file, buf, sz);
+    free(buf);
 }
 
-static size_t load_blob(const char *key, station_t *list, size_t cap)
+static size_t load_blob(const char *file, station_t *list, size_t cap)
 {
-    nvs_handle_t h;
-    if (nvs_open(NVS_NS, NVS_READONLY, &h) != ESP_OK) {
-        return 0;
-    }
-    size_t sz = 0;
-    size_t n = 0;
-    if (nvs_get_blob(h, key, NULL, &sz) == ESP_OK && sz > 4) {
-        uint8_t *buf = psram_malloc(sz);
-        if (buf && nvs_get_blob(h, key, buf, &sz) == ESP_OK &&
-                buf[0] == BLOB_VERSION && (buf[1] | (buf[2] << 8)) == sizeof(station_t)) {
-            n = (sz - 4) / sizeof(station_t);
-            if (n > cap) {
-                n = cap;
-            }
-            memcpy(list, buf + 4, n * sizeof(station_t));
+    size_t sz = 0, n = 0;
+    uint8_t *buf = sdcard_load(file, &sz);
+    if (buf && sz > 4 && buf[0] == BLOB_VERSION && (buf[1] | (buf[2] << 8)) == sizeof(station_t)) {
+        n = (sz - 4) / sizeof(station_t);
+        if (n > cap) {
+            n = cap;
         }
-        free(buf);
+        memcpy(list, buf + 4, n * sizeof(station_t));
     }
-    nvs_close(h);
+    free(buf);
     return n;
 }
 
@@ -124,8 +105,15 @@ esp_err_t station_db_init(void)
     static const cJSON_Hooks hooks = { .malloc_fn = psram_malloc, .free_fn = free };
     cJSON_InitHooks((cJSON_Hooks *)&hooks);
 
-    s_all_n = load_blob("dir", s_all, MAX_STATIONS);
-    s_fav_n = load_blob("fav", s_fav, MAX_FAVORITES);
+    return ESP_OK;
+}
+
+void station_db_load(void)
+{
+    xSemaphoreTake(s_lock, portMAX_DELAY);
+    s_all_n = load_blob("stations.bin", s_all, MAX_STATIONS);
+    s_fav_n = load_blob("favorites.bin", s_fav, MAX_FAVORITES);
+    xSemaphoreGive(s_lock);
     if (s_all_n) {
         snprintf(s_status, sizeof(s_status), "%u stations (cached)", (unsigned)s_all_n);
     }
@@ -133,7 +121,6 @@ esp_err_t station_db_init(void)
     s_rev_all++;
     s_rev_fav++;
     s_rev_status++;
-    return ESP_OK;
 }
 
 /* ------------------------------------------------------------------ */
@@ -326,7 +313,7 @@ esp_err_t station_db_refresh(void)
         s_all_n = got;
         xSemaphoreGive(s_lock);
         s_rev_all++;
-        save_blob("dir", tmp, got);
+        save_blob("stations.bin", tmp, got);
         set_status("%u stations", (unsigned)got);
         result = ESP_OK;
     } else if (s_all_n) {
@@ -351,7 +338,7 @@ static void refresh_task(void *arg)
 void station_db_refresh_async(void)
 {
     if (!s_busy) {
-        /* internal-RAM stack: this task writes NVS, and PSRAM is unreachable while flash is busy */
+        /* internal-RAM stack for the TLS handshake */
         xTaskCreatePinnedToCore(refresh_task, "stations", 10240, NULL, 3, NULL, 0);
     }
 }
@@ -424,7 +411,7 @@ void station_db_set_favorite(const station_t *st, bool fav)
     }
     xSemaphoreGive(s_lock);
     if (changed) {
-        save_blob("fav", s_fav, s_fav_n);
+        save_blob("favorites.bin", s_fav, s_fav_n);
         s_rev_fav++;
     }
 }

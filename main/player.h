@@ -43,6 +43,8 @@ void player_stop(void);
 void player_set_volume(int volume);
 int player_get_volume(void);
 /** Persist the current volume (call when the user lets go of the slider). */
+/** Restore the saved volume from the SD card (after sdcard_mount()). */
+void player_load_settings(void);
 void player_save_volume(void);
 /** Station played last (restored at boot). */
 bool player_last_station(station_t *out);

@@ -55,3 +55,7 @@ CONFIG_LV_USE_PERF_MONITOR=n
 # The speaker amp's current peaks dip the 3.3 V rail on weak USB supplies;
 # use the lowest brownout threshold (~2.42 V) so short dips don't reset the board.
 CONFIG_ESP_BROWNOUT_DET_LVL_SEL_5=y
+
+# ---- SD card -------------------------------------------------------------------
+# Settings and caches live on the card (never in internal flash); allow long names
+CONFIG_FATFS_LFN_HEAP=y

@@ -12,7 +12,7 @@
 #include "esp_heap_caps.h"
 #include "esp_http_client.h"
 #include "esp_crt_bundle.h"
-#include "nvs.h"
+#include "sdcard.h"
 #include "esp_audio_dec_default.h"
 #include "esp_audio_simple_dec.h"
 #include "esp_audio_simple_dec_default.h"
@@ -778,14 +778,6 @@ esp_err_t player_init(void)
     esp_audio_dec_register_default();
     esp_audio_simple_dec_register_default();
 
-    nvs_handle_t h;
-    if (nvs_open("radio", NVS_READONLY, &h) == ESP_OK) {
-        int32_t v;
-        if (nvs_get_i32(h, "vol", &v) == ESP_OK) {
-            s_volume = v;
-        }
-        nvs_close(h);
-    }
     board_audio_set_volume(s_volume);
 
     /* Networking and decoding on separate cores so a slow TLS read never starves audio */
@@ -809,12 +801,7 @@ void player_play(const station_t *st)
     xSemaphoreGive(s_lock);
     xTaskNotifyGive(s_reader);
 
-    nvs_handle_t h;
-    if (nvs_open("radio", NVS_READWRITE, &h) == ESP_OK) {
-        nvs_set_blob(h, "last", st, sizeof(*st));
-        nvs_commit(h);
-        nvs_close(h);
-    }
+    sdcard_save("last.bin", st, sizeof(*st));
 }
 
 void player_stop(void)
@@ -842,14 +829,14 @@ int player_get_volume(void)
     return s_volume;
 }
 
+void player_load_settings(void)
+{
+    player_set_volume(sdcard_load_int("volume.txt", s_volume));
+}
+
 void player_save_volume(void)
 {
-    nvs_handle_t h;
-    if (nvs_open("radio", NVS_READWRITE, &h) == ESP_OK) {
-        nvs_set_i32(h, "vol", s_volume);
-        nvs_commit(h);
-        nvs_close(h);
-    }
+    sdcard_save_int("volume.txt", s_volume);
 }
 
 void player_get_status(player_status_t *out)
@@ -863,12 +850,15 @@ void player_get_status(player_status_t *out)
 
 bool player_last_station(station_t *out)
 {
-    nvs_handle_t h;
-    bool ok = false;
-    if (nvs_open("radio", NVS_READONLY, &h) == ESP_OK) {
-        size_t sz = sizeof(*out);
-        ok = nvs_get_blob(h, "last", out, &sz) == ESP_OK && sz == sizeof(*out);
-        nvs_close(h);
+    size_t sz = 0;
+    station_t *st = sdcard_load("last.bin", &sz);
+    bool ok = st && sz == sizeof(*out);
+    if (ok) {
+        *out = *st;
+        out->name[sizeof(out->name) - 1] = 0;
+        out->url[sizeof(out->url) - 1] = 0;
+        out->codec[sizeof(out->codec) - 1] = 0;
     }
+    free(st);
     return ok;
 }
