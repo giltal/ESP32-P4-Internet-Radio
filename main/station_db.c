@@ -41,7 +41,7 @@ static volatile uint32_t s_rev_all;
 static volatile uint32_t s_rev_fav;
 static volatile uint32_t s_rev_status;
 static volatile bool s_busy;
-static char s_status[96] = "No stations yet";
+static char s_status[96] = "אין תחנות עדיין";
 
 /* ------------------------------------------------------------------ */
 
@@ -115,7 +115,7 @@ void station_db_load(void)
     s_fav_n = load_blob("favorites.bin", s_fav, MAX_FAVORITES);
     xSemaphoreGive(s_lock);
     if (s_all_n) {
-        snprintf(s_status, sizeof(s_status), "%u stations (cached)", (unsigned)s_all_n);
+        snprintf(s_status, sizeof(s_status), "%u תחנות (שמורות)", (unsigned)s_all_n);
     }
     ESP_LOGI(TAG, "loaded %u stations, %u favorites", (unsigned)s_all_n, (unsigned)s_fav_n);
     s_rev_all++;
@@ -278,7 +278,7 @@ esp_err_t station_db_refresh(void)
         return ESP_ERR_INVALID_STATE;
     }
     s_busy = true;
-    set_status("Updating station list…");
+    set_status("מעדכן את רשימת התחנות…");
 
     station_t *tmp = heap_caps_calloc(MAX_STATIONS, sizeof(station_t), MALLOC_CAP_SPIRAM);
     esp_err_t result = ESP_FAIL;
@@ -314,12 +314,12 @@ esp_err_t station_db_refresh(void)
         xSemaphoreGive(s_lock);
         s_rev_all++;
         save_blob("stations.bin", tmp, got);
-        set_status("%u stations", (unsigned)got);
+        set_status("%u תחנות", (unsigned)got);
         result = ESP_OK;
     } else if (s_all_n) {
-        set_status("Update failed, %u cached stations", (unsigned)s_all_n);
+        set_status("העדכון נכשל, %u תחנות שמורות", (unsigned)s_all_n);
     } else {
-        set_status("Could not reach radio-browser.info");
+        set_status("אין גישה ל-radio-browser.info");
     }
 
 done:

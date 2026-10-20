@@ -1,6 +1,6 @@
 /*
  * Wi-Fi station via the on-board ESP32-C6 (esp_hosted + esp_wifi_remote).
- * Credentials come from WiFi.txt on the SD card (or the menuconfig default) and stay in RAM.
+ * Network time is handled by clock.c. Credentials come from WiFi.txt on the SD card (or the menuconfig default) and stay in RAM.
  */
 #pragma once
 

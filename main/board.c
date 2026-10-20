@@ -141,6 +141,12 @@ static esp_err_t i2c_init(void)
     return i2c_new_master_bus(&cfg, &s_i2c_bus);
 }
 
+i2c_master_bus_handle_t board_i2c_bus(void)
+{
+    i2c_init();
+    return s_i2c_bus;
+}
+
 /* ------------------------------------------------------------------ */
 /* Backlight                                                           */
 /* ------------------------------------------------------------------ */

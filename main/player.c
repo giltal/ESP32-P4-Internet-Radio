@@ -441,7 +441,7 @@ static stream_result_t stream_once(uint32_t sess, const station_t *st, bool *rea
             ESP_LOGW(TAG, "%s -> HTTP %d", url, status);
             esp_http_client_cleanup(c);
             if (status == 404 || status == 403 || status == 410) {
-                status_set_state(sess, PLAYER_ERROR, status == 404 ? "Stream not found (404)" : "Access denied by server");
+                status_set_state(sess, PLAYER_ERROR, status == 404 ? "השידור לא נמצא (404)" : "השרת חסם את הגישה");
                 return STREAM_FATAL;
             }
             return STREAM_LOST;
@@ -453,11 +453,11 @@ static stream_result_t stream_once(uint32_t sess, const station_t *st, bool *rea
             esp_http_client_close(c);
             esp_http_client_cleanup(c);
             if (strstr((char *)buf, "#EXT-X-")) {
-                status_set_state(sess, PLAYER_ERROR, "HLS stream - not supported");
+                status_set_state(sess, PLAYER_ERROR, "שידור HLS אינו נתמך");
                 return STREAM_FATAL;
             }
             if (!playlist_first_url((char *)buf, url, sizeof(url))) {
-                status_set_state(sess, PLAYER_ERROR, "Empty playlist");
+                status_set_state(sess, PLAYER_ERROR, "רשימת השמעה ריקה");
                 return STREAM_FATAL;
             }
             ESP_LOGI(TAG, "playlist -> %s", url);
@@ -477,7 +477,7 @@ static stream_result_t stream_once(uint32_t sess, const station_t *st, bool *rea
             ESP_LOGW(TAG, "unsupported content-type '%s'", hdrs.content_type);
             esp_http_client_close(c);
             esp_http_client_cleanup(c);
-            status_set_state(sess, PLAYER_ERROR, "Unsupported audio format");
+            status_set_state(sess, PLAYER_ERROR, "פורמט שמע לא נתמך");
             return STREAM_FATAL;
         }
         const char *codec_name = type == ESP_AUDIO_SIMPLE_DEC_TYPE_AAC ? "AAC" : "MP3";
@@ -563,7 +563,7 @@ static stream_result_t stream_once(uint32_t sess, const station_t *st, bool *rea
         esp_http_client_cleanup(c);
         return result;
     }
-    status_set_state(sess, PLAYER_ERROR, "Playlist nesting too deep");
+    status_set_state(sess, PLAYER_ERROR, "רשימת השמעה מקוננת מדי");
     return STREAM_FATAL;
 }
 
@@ -589,7 +589,7 @@ static void reader_task(void *arg)
 
         int attempt = 0;
         while (sess == s_session) {
-            status_set_state(sess, PLAYER_CONNECTING, attempt ? "Reconnecting…" : NULL);
+            status_set_state(sess, PLAYER_CONNECTING, attempt ? "מתחבר מחדש…" : NULL);
             bool reached_audio = false;
             stream_result_t r = stream_once(sess, &st, &reached_audio);
             if (r == STREAM_CANCELLED || r == STREAM_FATAL || sess != s_session) {
@@ -597,7 +597,7 @@ static void reader_task(void *arg)
             }
             attempt = reached_audio ? 1 : attempt + 1;
             if (attempt > MAX_RETRIES) {
-                status_set_state(sess, PLAYER_ERROR, "Can't connect to this station");
+                status_set_state(sess, PLAYER_ERROR, "אין חיבור לתחנה הזו");
                 break;
             }
             /* back off, but wake immediately if the user picks another station */
@@ -666,7 +666,7 @@ static void decode_session(uint32_t sess)
     }
     esp_audio_simple_dec_handle_t dec = NULL;
     if (esp_audio_simple_dec_open(&cfg, &dec) != ESP_AUDIO_ERR_OK) {
-        status_set_state(sess, PLAYER_ERROR, "Decoder init failed");
+        status_set_state(sess, PLAYER_ERROR, "שגיאה בהפעלת המפענח");
         return;
     }
 

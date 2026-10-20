@@ -11,8 +11,10 @@ Stations come from [radio-browser.info](https://www.radio-browser.info), filtere
 - Streaming over HTTP and HTTPS (certificate bundle). It follows **redirects** (needed for StreamTheWorld / Kan), resolves `.pls` / `.m3u` playlists, and accepts Shoutcast `ICY 200` responses.
 - **ICY "now playing"** titles. Legacy Windows-1255 (Hebrew) and Windows-1251 (Russian) titles are converted to UTF-8.
 - 384 KB PSRAM ring buffer with pre-buffering, underrun recovery and automatic reconnect with back-off.
-- Hebrew, Arabic, Russian and Latin text with right-to-left layout (LVGL BiDi + Arabic shaping). The Noto Sans fonts are compiled in at 20, 28 and 40 px.
-- Settings screen with Wi-Fi scan, an on-screen keyboard for the password, and a brightness control.
+- Hebrew right-to-left UI in the Alef font, with a large clock, the Hebrew weekday and the full date. Arabic and Russian station names render through Noto Sans fallback fonts (LVGL BiDi + Arabic shaping).
+- Song title and artist split from the stream's ICY "Artist - Title" metadata.
+- Clock kept by the on-board RX8025T RTC (stored as UTC; Israel time zone with automatic summer time), synced from the network or set by hand.
+- Settings screen (Hebrew): Wi-Fi scan with a Hebrew / English / digits keyboard, date & time setup with automatic network sync, and brightness.
 - Level meter, buffer meter, and codec / bitrate / sample-rate readout.
 
 ## Hardware notes (JC1060P470C)
@@ -78,10 +80,14 @@ idf.py -D SDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.defaults.p4rev3" set-
 | `main/sdcard.c` | microSD (kept mounted next to the C6 link): `WiFi.txt` and all saved settings |
 | `main/player.c` | HTTP reader (redirects, playlists, ICY metadata) → ring buffer → MP3/AAC decoder → codec |
 | `main/byte_ring.c` | Resettable PSRAM byte ring buffer |
-| `main/ui.c` | LVGL UI: station lists, now-playing card, settings overlay |
-| `main/fonts/` | Generated Noto Sans fonts (Latin, Hebrew, Cyrillic, Arabic) + LVGL symbols |
+| `main/ui.c` | LVGL UI (Hebrew, RTL): clock/date header, station lists, now-playing card, settings overlay |
+| `main/ui_common.c` | Fonts with fallback chain, RTL helpers, Hebrew/English keyboard, toast |
+| `main/clock.c` | RX8025T RTC + SNTP, Israel time zone, manual clock setting |
+| `main/fonts/` | Alef Hebrew fonts (22/32/48 px, 120 px clock digits) and Noto Sans fallbacks (Latin, Hebrew, Cyrillic, Arabic) + LVGL symbols |
 
 ### Regenerating the fonts
+
+The Alef fonts: `sh tools/gen_fonts_heb.sh` (Node.js required). The Noto fallback fonts:
 
 ```bash
 npm i lv_font_conv
@@ -98,7 +104,8 @@ npx lv_font_conv --bpp 4 --size 20 --no-compress --format lvgl --force-fast-kern
 ## Credits
 
 - Panel init sequences and timings: Guition reference drivers, via ESPHome's `mipi_dsi` models.
-- Fonts: Noto Sans / Noto Sans Hebrew / Noto Sans Arabic (SIL Open Font License), FontAwesome 5 Free (SIL OFL / CC BY 4.0).
+- Fonts: Alef (SIL Open Font License, see `fonts_src/OFL.txt`), Noto Sans / Noto Sans Hebrew / Noto Sans Arabic (SIL Open Font License), FontAwesome 5 Free (SIL OFL / CC BY 4.0).
+- Hebrew UI layout, keyboard and RTC driver adapted from the ESP32_P4_FingerprintLoginSystem project.
 - Station data: radio-browser.info community database.
 
 ## License

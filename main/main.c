@@ -16,6 +16,7 @@
 #include "esp_lvgl_port.h"
 #include "board.h"
 #include "player.h"
+#include "clock.h"
 #include "sdcard.h"
 #include "station_db.h"
 #include "wifi_mgr.h"
@@ -36,6 +37,7 @@ void app_main(void)
 
     lv_display_t *disp = NULL;
     ESP_ERROR_CHECK(board_display_init(&disp));
+    clock_init(board_i2c_bus());   /* system time from the RTC before anything shows it */
 
     if (board_audio_init() != ESP_OK) {
         ESP_LOGE(TAG, "audio codec init failed - continuing without sound");
@@ -54,6 +56,7 @@ void app_main(void)
 
     station_db_load();
     player_load_settings();
+    clock_load_settings();
     lvgl_port_lock(0);
     ui_load_settings();
     lvgl_port_unlock();

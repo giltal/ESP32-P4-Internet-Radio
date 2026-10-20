@@ -15,6 +15,7 @@
 #include <stdint.h>
 #include "esp_err.h"
 #include "lvgl.h"
+#include "driver/i2c_master.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -34,6 +35,9 @@ extern "C" {
 
 /** Bring up I2C, display, touch and LVGL. Returns the LVGL display. */
 esp_err_t board_display_init(lv_display_t **out_disp);
+
+/** Shared I2C bus (touch, codec, RTC). */
+i2c_master_bus_handle_t board_i2c_bus(void);
 
 /** Backlight brightness 0..100 %. */
 void board_backlight_set(int percent);

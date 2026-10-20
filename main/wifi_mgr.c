@@ -4,12 +4,13 @@
 #include <time.h>
 #include "freertos/FreeRTOS.h"
 #include "freertos/event_groups.h"
+#include "freertos/semphr.h"
 #include "esp_log.h"
 #include "esp_wifi.h"
 #include "esp_event.h"
 #include "esp_timer.h"
 #include "esp_netif.h"
-#include "esp_netif_sntp.h"
+#include "clock.h"
 #include "sdkconfig.h"
 
 static const char *TAG = "wifi";
@@ -17,12 +18,17 @@ static const char *TAG = "wifi";
 #define EV_CONNECTED  BIT0
 
 static EventGroupHandle_t s_ev;
+/*
+ * Serialises scans and AP-info queries. With the C6's older esp-hosted firmware,
+ * a get_ap_info RPC issued while a scan is in flight gets a mismatched reply and
+ * esp_hosted copies from a NULL list (assert in hosted_memcpy).
+ */
+static SemaphoreHandle_t s_rpc_lock;
 static volatile wifi_state_t s_state = WIFI_STATE_IDLE;
 static char s_ssid[33];
 static char s_pass[65];
 static int s_retries;
 static bool s_scanning;
-static bool s_sntp_started;
 static esp_timer_handle_t s_retry_timer;
 
 static void retry_cb(void *arg)
@@ -74,24 +80,17 @@ static void on_event(void *arg, esp_event_base_t base, int32_t id, void *data)
         s_state = WIFI_STATE_CONNECTED;
         s_retries = 0;
         xEventGroupSetBits(s_ev, EV_CONNECTED);
-        if (!s_sntp_started) {
-            esp_sntp_config_t cfg = ESP_NETIF_SNTP_DEFAULT_CONFIG("pool.ntp.org");
-            esp_netif_sntp_init(&cfg);
-            s_sntp_started = true;
-        }
+        clock_network_up();
     }
 }
 
 esp_err_t wifi_mgr_start(void)
 {
     s_ev = xEventGroupCreate();
+    s_rpc_lock = xSemaphoreCreateMutex();
     const esp_timer_create_args_t targs = { .callback = retry_cb, .name = "wifi_retry" };
     ESP_ERROR_CHECK(esp_timer_create(&targs, &s_retry_timer));
     load_credentials();
-
-    /* Israel: UTC+2, DST from the Friday before the last Sunday of March to the last Sunday of October */
-    setenv("TZ", "IST-2IDT,M3.4.4/26,M10.5.0", 1);
-    tzset();
 
     ESP_ERROR_CHECK(esp_netif_init());
     esp_netif_create_default_wifi_sta();
@@ -124,11 +123,22 @@ void wifi_mgr_ssid(char *buf, size_t len)
 
 int wifi_mgr_rssi(void)
 {
-    wifi_ap_record_t ap;
-    if (s_state == WIFI_STATE_CONNECTED && esp_wifi_sta_get_ap_info(&ap) == ESP_OK) {
-        return ap.rssi;
+    static int64_t s_last_us;
+    static int s_rssi;
+    if (s_state != WIFI_STATE_CONNECTED) {
+        return 0;
     }
-    return 0;
+    int64_t now = esp_timer_get_time();
+    /* at most every 2 s, and never while a scan holds the lock (keep the last value) */
+    if (now - s_last_us > 2000000 && xSemaphoreTake(s_rpc_lock, 0) == pdTRUE) {
+        wifi_ap_record_t ap;
+        if (esp_wifi_sta_get_ap_info(&ap) == ESP_OK) {
+            s_rssi = ap.rssi;
+        }
+        s_last_us = now;
+        xSemaphoreGive(s_rpc_lock);
+    }
+    return s_rssi;
 }
 
 esp_err_t wifi_mgr_connect(const char *ssid, const char *password)
@@ -151,7 +161,7 @@ static int cmp_rssi(const void *a, const void *b)
     return ((const wifi_ap_info_t *)b)->rssi - ((const wifi_ap_info_t *)a)->rssi;
 }
 
-size_t wifi_mgr_scan(wifi_ap_info_t *out, size_t max)
+static size_t scan_locked(wifi_ap_info_t *out, size_t max)
 {
     wifi_scan_config_t sc = { .show_hidden = false };
     /* a scan is refused while the driver is busy (re)connecting, so pause that */
@@ -204,4 +214,12 @@ size_t wifi_mgr_scan(wifi_ap_info_t *out, size_t max)
     free(recs);
     qsort(out, count, sizeof(out[0]), cmp_rssi);
     return count;
+}
+
+size_t wifi_mgr_scan(wifi_ap_info_t *out, size_t max)
+{
+    xSemaphoreTake(s_rpc_lock, portMAX_DELAY);
+    size_t n = scan_locked(out, max);
+    xSemaphoreGive(s_rpc_lock);
+    return n;
 }
