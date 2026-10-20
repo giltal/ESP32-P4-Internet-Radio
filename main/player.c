@@ -2,6 +2,7 @@
 
 #include <ctype.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <strings.h>
 #include "freertos/FreeRTOS.h"
@@ -250,6 +251,100 @@ static bool playlist_first_url(const char *body, char *out, size_t cap)
     return false;
 }
 
+/*
+ * StreamTheWorld (Kan, many US stations) serves each mount from a pool of numbered
+ * edge nodes (NNNNN.live.streamtheworld.com) that come and go. Directory URLs pin one
+ * node, which may be long dead, so ask the provisioning API for the current pool and
+ * swap the host. Successive calls rotate through the pool so a reconnect tries another node.
+ */
+#define STW_HOST_SUFFIX ".live.streamtheworld.com"
+#define STW_MAX_NODES   8
+
+static bool stw_resolve(char *url, size_t cap)
+{
+    static unsigned s_rot;
+    const char *host = strstr(url, "://");
+    if (!host) {
+        return false;
+    }
+    host += 3;
+    const char *path = strchr(host, '/');
+    size_t sl = strlen(STW_HOST_SUFFIX);
+    if (!path || (size_t)(path - host) <= sl || strncasecmp(path - sl, STW_HOST_SUFFIX, sl) != 0) {
+        return false;
+    }
+    char mount[64];
+    size_t ml = strcspn(path + 1, "./?");
+    if (ml == 0 || ml >= sizeof(mount)) {
+        return false;
+    }
+    memcpy(mount, path + 1, ml);
+    mount[ml] = 0;
+
+    char api[160];
+    snprintf(api, sizeof(api),
+             "https://playerservices.streamtheworld.com/api/livestream?version=1.9&mount=%s&lang=en", mount);
+    esp_http_client_config_t cfg = {
+        .url = api,
+        .timeout_ms = 5000,
+        .crt_bundle_attach = esp_crt_bundle_attach,
+        .user_agent = "ESP32-P4-Internet-Radio/1.0",
+    };
+    esp_http_client_handle_t c = esp_http_client_init(&cfg);
+    if (!c) {
+        return false;
+    }
+    const size_t body_cap = 12 * 1024;
+    char *body = heap_caps_malloc(body_cap, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    size_t len = 0;
+    if (body && esp_http_client_open(c, 0) == ESP_OK) {
+        esp_http_client_fetch_headers(c);
+        if (esp_http_client_get_status_code(c) == 200) {
+            int r;
+            while (len < body_cap - 1 && (r = esp_http_client_read(c, body + len, body_cap - 1 - len)) > 0) {
+                len += r;
+            }
+        }
+    }
+    esp_http_client_close(c);
+    esp_http_client_cleanup(c);
+    if (!body) {
+        return false;
+    }
+    body[len] = 0;
+
+    /* collect <ip>node</ip> entries in the API's preference order */
+    char nodes[STW_MAX_NODES][64];
+    int count = 0;
+    for (const char *p = body; count < STW_MAX_NODES && (p = strstr(p, "<ip>")) != NULL;) {
+        p += 4;
+        const char *e = strstr(p, "</ip>");
+        if (!e) {
+            break;
+        }
+        if (e > p && (size_t)(e - p) < sizeof(nodes[0])) {
+            memcpy(nodes[count], p, e - p);
+            nodes[count][e - p] = 0;
+            count++;
+        }
+        p = e;
+    }
+    free(body);
+    if (count == 0) {
+        ESP_LOGW(TAG, "StreamTheWorld: no servers listed for %s", mount);
+        return false;
+    }
+
+    char resolved[sizeof(((station_t *)0)->url)];
+    int n = snprintf(resolved, sizeof(resolved), "https://%s%s", nodes[s_rot++ % count], path);
+    if (n <= 0 || (size_t)n >= sizeof(resolved) || (size_t)n >= cap) {
+        return false;
+    }
+    strlcpy(url, resolved, cap);
+    ESP_LOGI(TAG, "StreamTheWorld %s: %d servers, using %s", mount, count, url);
+    return true;
+}
+
 static esp_audio_simple_dec_type_t pick_decoder(const char *ctype, const char *station_codec,
                                                 const uint8_t *peek, size_t peek_len)
 {
@@ -300,6 +395,7 @@ static stream_result_t stream_once(uint32_t sess, const station_t *st, bool *rea
     static char meta[16 * 255 + 1];
     char url[sizeof(st->url)];
     strlcpy(url, st->url, sizeof(url));
+    stw_resolve(url, sizeof(url));   /* no-op for anything but StreamTheWorld */
     http_hdrs_t hdrs;
     stream_result_t result = STREAM_LOST;
 
