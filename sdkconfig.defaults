@@ -50,3 +50,8 @@ CONFIG_LV_BIDI_DIR_AUTO=y
 CONFIG_LV_USE_ARABIC_PERSIAN_CHARS=y
 CONFIG_LV_FONT_MONTSERRAT_14=y
 CONFIG_LV_USE_PERF_MONITOR=n
+
+# ---- Power ---------------------------------------------------------------------
+# The speaker amp's current peaks dip the 3.3 V rail on weak USB supplies;
+# use the lowest brownout threshold (~2.42 V) so short dips don't reset the board.
+CONFIG_ESP_BROWNOUT_DET_LVL_SEL_5=y

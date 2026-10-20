@@ -387,6 +387,9 @@ esp_err_t board_audio_init(void)
         .pa_reverted = false,
         .master_mode = false,
         .use_mclk = true,
+        /* Cap the DAC swing for a 5 V amp fed from a 3.3 V codec (as Guition's BSP does):
+         * unclipped output keeps the NS4150's current peaks from browning out the board */
+        .hw_gain = { .pa_voltage = 5.0, .codec_dac_voltage = 3.3 },
     };
     const audio_codec_if_t *codec_if = es8311_codec_new(&es_cfg);
     ESP_RETURN_ON_FALSE(codec_if, ESP_FAIL, TAG, "ES8311 not responding on I2C");
