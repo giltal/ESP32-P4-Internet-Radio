@@ -6,8 +6,10 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "esp_log.h"
+#include "esp_heap_caps.h"
 #include "board.h"
 #include "clock.h"
+#include "logo.h"
 #include "player.h"
 #include "sdcard.h"
 #include "station_db.h"
@@ -37,6 +39,10 @@ static lv_obj_t *s_refresh_btn;
 
 static lv_obj_t *s_avatar;
 static lv_obj_t *s_avatar_lbl;
+static lv_obj_t *s_logo_img;
+static lv_image_dsc_t s_logo_dsc;
+static uint8_t *s_logo_px;              /* PSRAM, LOGO_SIZE^2 ARGB8888 */
+static uint32_t s_logo_rev_seen = UINT32_MAX;
 static lv_obj_t *s_station_lbl;
 static lv_obj_t *s_state_lbl;
 static lv_obj_t *s_song_lbl;
@@ -284,19 +290,47 @@ static void update_fav_button(void)
     lv_obj_set_style_text_color(icon, fav ? COL_ACCENT : COL_DIM, 0);
 }
 
+/* Station logo on a white tile when we have one, else the coloured letter badge */
+static void show_badge(void)
+{
+    lv_obj_add_flag(s_logo_img, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_remove_flag(s_avatar_lbl, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_set_style_bg_color(s_avatar, s_have_current ? color_for(s_current.name) : COL_CARD2, 0);
+}
+
+static void update_logo(void)
+{
+    uint32_t rev = logo_revision();
+    if (rev == s_logo_rev_seen) {
+        return;
+    }
+    s_logo_rev_seen = rev;
+    if (s_have_current && s_logo_px && logo_copy(s_current.logo, s_logo_px)) {
+        lv_image_set_src(s_logo_img, &s_logo_dsc);
+        lv_obj_invalidate(s_logo_img);
+        lv_obj_remove_flag(s_logo_img, LV_OBJ_FLAG_HIDDEN);
+        lv_obj_add_flag(s_avatar_lbl, LV_OBJ_FLAG_HIDDEN);
+        lv_obj_set_style_bg_color(s_avatar, lv_color_white(), 0);
+    } else {
+        show_badge();
+    }
+}
+
 static void update_now_playing_header(void)
 {
+    if (s_have_current) {
+        logo_request(s_current.logo);
+    }
+    show_badge();   /* until this station's logo is ready */
     if (!s_have_current) {
         lv_label_set_text(s_station_lbl, "בחרו תחנה");
         lv_label_set_text(s_avatar_lbl, LV_SYMBOL_AUDIO);
-        lv_obj_set_style_bg_color(s_avatar, COL_CARD2, 0);
         update_fav_button();
         return;
     }
     char ini[5];
     initial_of(s_current.name, ini);
     lv_label_set_text(s_avatar_lbl, ini);
-    lv_obj_set_style_bg_color(s_avatar, color_for(s_current.name), 0);
     lv_label_set_text(s_station_lbl, s_current.name);
     update_fav_button();
     mark_current_in_list(STATION_LIST_ALL);
@@ -848,6 +882,7 @@ static void tick_cb(lv_timer_t *t)
     n++;
 
     update_player();
+    update_logo();
 
     for (int l = 0; l < 2; l++) {
         uint32_t rev = station_db_revision((station_list_t)l);
@@ -951,8 +986,22 @@ static void build_now_playing(lv_obj_t *scr)
     lv_obj_set_style_bg_color(s_avatar, COL_CARD2, 0);
     lv_obj_remove_flag(s_avatar, LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE);
     ui_align(s_avatar, LV_ALIGN_TOP_RIGHT, 0, 0);
+    lv_obj_set_style_pad_all(s_avatar, 0, 0);
     s_avatar_lbl = ui_label(s_avatar, &g_font48, lv_color_white(), LV_SYMBOL_AUDIO);
     lv_obj_center(s_avatar_lbl);
+
+    s_logo_px = heap_caps_calloc(1, LOGO_SIZE * LOGO_SIZE * 4, MALLOC_CAP_SPIRAM);
+    s_logo_dsc.header.magic = LV_IMAGE_HEADER_MAGIC;
+    s_logo_dsc.header.cf = LV_COLOR_FORMAT_ARGB8888;
+    s_logo_dsc.header.w = LOGO_SIZE;
+    s_logo_dsc.header.h = LOGO_SIZE;
+    s_logo_dsc.header.stride = LOGO_SIZE * 4;
+    s_logo_dsc.data_size = LOGO_SIZE * LOGO_SIZE * 4;
+    s_logo_dsc.data = s_logo_px;
+    s_logo_img = lv_image_create(s_avatar);
+    lv_obj_set_size(s_logo_img, LOGO_SIZE, LOGO_SIZE);
+    lv_obj_center(s_logo_img);
+    lv_obj_add_flag(s_logo_img, LV_OBJ_FLAG_HIDDEN);
 
     s_station_lbl = ui_label(np, &g_font48, COL_TEXT, "בחרו תחנה");
     lv_obj_set_size(s_station_lbl, 400, 65);   /* one line, long names end with "…" */

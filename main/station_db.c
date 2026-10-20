@@ -21,7 +21,7 @@ static const char *TAG = "stations";
 #define MAX_STATIONS     CONFIG_RADIO_MAX_STATIONS
 #define MAX_FAVORITES    48
 #define MAX_JSON_BYTES   (1536 * 1024)
-#define BLOB_VERSION     1
+#define BLOB_VERSION     2   /* 2: station_t gained the logo URL */
 
 /* radio-browser.info asks clients to rotate between its mirrors */
 static const char *const s_servers[] = {
@@ -266,6 +266,10 @@ static size_t parse_directory(const char *json, station_t *out, size_t cap)
         strlcpy(st.codec, norm, sizeof(st.codec));
         int br = json_int(it, "bitrate");
         st.bitrate = br > 0 && br < 2000 ? br : 0;
+        const char *logo = json_str(it, "favicon");
+        if (strncmp(logo, "http", 4) == 0 && strlen(logo) < sizeof(st.logo)) {
+            strlcpy(st.logo, logo, sizeof(st.logo));
+        }
         out[n++] = st;
     }
     cJSON_Delete(root);

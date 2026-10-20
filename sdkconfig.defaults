@@ -50,6 +50,8 @@ CONFIG_LV_BIDI_DIR_AUTO=y
 CONFIG_LV_USE_ARABIC_PERSIAN_CHARS=y
 CONFIG_LV_FONT_MONTSERRAT_14=y
 CONFIG_LV_USE_PERF_MONITOR=n
+# PNG decoder for station logos (decoded once, cached as thumbnails on the SD card)
+CONFIG_LV_USE_LODEPNG=y
 
 # ---- Power ---------------------------------------------------------------------
 # The speaker amp's current peaks dip the 3.3 V rail on weak USB supplies;

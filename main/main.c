@@ -17,6 +17,7 @@
 #include "board.h"
 #include "player.h"
 #include "clock.h"
+#include "logo.h"
 #include "sdcard.h"
 #include "station_db.h"
 #include "wifi_mgr.h"
@@ -45,6 +46,7 @@ void app_main(void)
 
     ESP_ERROR_CHECK(station_db_init());
     ESP_ERROR_CHECK(player_init());
+    logo_init();
 
     lvgl_port_lock(0);
     ui_init(disp);

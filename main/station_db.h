@@ -19,6 +19,7 @@ typedef struct {
     char url[256];
     char codec[8];      /* "MP3" or "AAC" */
     uint16_t bitrate;   /* kbps, 0 = unknown */
+    char logo[224];     /* station logo URL (radio-browser "favicon"), may be empty */
 } station_t;
 
 typedef enum {

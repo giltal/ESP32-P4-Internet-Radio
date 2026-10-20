@@ -127,6 +127,7 @@ esp_err_t sdcard_mount(void)
     ESP_LOGI(TAG, "card mounted: %s, %llu MB", card->cid.name,
              ((uint64_t)card->csd.capacity) * card->csd.sector_size / (1024 * 1024));
     mkdir(DATA_DIR, 0775);
+    mkdir(DATA_DIR "/logos", 0775);
     s_ready = true;
     return ESP_OK;
 }
