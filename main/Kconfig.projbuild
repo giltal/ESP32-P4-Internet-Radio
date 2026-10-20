@@ -32,7 +32,10 @@ menu "Internet Radio (JC1060P470C)"
             int "LCD reset GPIO (-1 = not used)"
             range -1 54
             default 0 if RADIO_PANEL_V2
-            default 5
+            default 27
+            help
+                On the JC1060P470C this line also powers the GT911 touch
+                controller (AVDD), so it must be the real reset pin.
 
         config RADIO_BL_GPIO
             int "Backlight PWM GPIO"
@@ -60,7 +63,7 @@ menu "Internet Radio (JC1060P470C)"
         config RADIO_PA_GPIO
             int "Speaker amplifier (NS4150) enable GPIO"
             range -1 54
-            default 11
+            default 20
 
         config RADIO_STREAM_BUFFER_KB
             int "Stream buffer size in PSRAM (KB)"

@@ -179,6 +179,21 @@ void board_backlight_set(int percent)
 /* Display + touch + LVGL                                              */
 /* ------------------------------------------------------------------ */
 
+/* The GT911 on this module is configured for 800x480; scale to the panel (as Guition's driver does) */
+#define TP_NATIVE_W 800
+#define TP_NATIVE_H 480
+
+static void touch_scale(esp_lcd_touch_handle_t tp, uint16_t *x, uint16_t *y, uint16_t *strength,
+                        uint8_t *point_num, uint8_t max_point_num)
+{
+    for (uint8_t i = 0; i < *point_num; i++) {
+        x[i] = (uint16_t)((uint32_t)x[i] * BOARD_LCD_H_RES / TP_NATIVE_W);
+        y[i] = (uint16_t)((uint32_t)y[i] * BOARD_LCD_V_RES / TP_NATIVE_H);
+        if (x[i] >= BOARD_LCD_H_RES) x[i] = BOARD_LCD_H_RES - 1;
+        if (y[i] >= BOARD_LCD_V_RES) y[i] = BOARD_LCD_V_RES - 1;
+    }
+}
+
 esp_err_t board_display_init(lv_display_t **out_disp)
 {
     ESP_RETURN_ON_ERROR(i2c_init(), TAG, "i2c");
@@ -236,11 +251,9 @@ esp_err_t board_display_init(lv_display_t **out_disp)
     ESP_RETURN_ON_ERROR(esp_lcd_panel_init(panel), TAG, "init");
     ESP_LOGI(TAG, "JD9165 panel up (%s)", PANEL_IS_V2 ? "V2" : "V1");
 
-    /* Touch: GT911 answers on 0x5D or 0x14 depending on strap state at power-up */
+    /* Touch: GT911 at 0x5D. RST/INT are not wired to the P4, and an I2C probe
+     * right after the panel reset upsets the controller, so address it directly. */
     uint8_t tp_addr = ESP_LCD_TOUCH_IO_I2C_GT911_ADDRESS;
-    if (i2c_master_probe(s_i2c_bus, tp_addr, 50) != ESP_OK) {
-        tp_addr = ESP_LCD_TOUCH_IO_I2C_GT911_ADDRESS_BACKUP;
-    }
     esp_lcd_panel_io_handle_t tp_io;
     esp_lcd_panel_io_i2c_config_t tp_io_cfg = ESP_LCD_TOUCH_IO_I2C_GT911_CONFIG();
     tp_io_cfg.dev_addr = tp_addr;
@@ -257,6 +270,7 @@ esp_err_t board_display_init(lv_display_t **out_disp)
             .mirror_x = TP_MIRROR_X,
             .mirror_y = TP_MIRROR_Y,
         },
+        .process_coordinates = touch_scale,
         .driver_data = &gt911_cfg,
     };
     esp_lcd_touch_handle_t tp = NULL;
@@ -321,12 +335,20 @@ esp_err_t board_audio_init(void)
 {
     ESP_RETURN_ON_ERROR(i2c_init(), TAG, "i2c");
 
-    i2s_chan_handle_t tx = NULL;
+    /* Amplifier off until the codec is running */
+    if (CONFIG_RADIO_PA_GPIO >= 0) {
+        gpio_config_t pa = { .pin_bit_mask = 1ULL << CONFIG_RADIO_PA_GPIO, .mode = GPIO_MODE_OUTPUT };
+        gpio_config(&pa);
+        gpio_set_level(CONFIG_RADIO_PA_GPIO, 0);
+    }
+
+    /* Full duplex like the board's stock BSP: the ES8311 is clocked from one I2S port for both directions */
+    i2s_chan_handle_t tx = NULL, rx = NULL;
     i2s_chan_config_t chan_cfg = I2S_CHANNEL_DEFAULT_CONFIG(I2S_NUM_0, I2S_ROLE_MASTER);
     chan_cfg.auto_clear = true;       /* send silence on underrun instead of repeating the last buffer */
     chan_cfg.dma_desc_num = 8;
     chan_cfg.dma_frame_num = 480;
-    ESP_RETURN_ON_ERROR(i2s_new_channel(&chan_cfg, &tx, NULL), TAG, "i2s chan");
+    ESP_RETURN_ON_ERROR(i2s_new_channel(&chan_cfg, &tx, &rx), TAG, "i2s chan");
 
     i2s_std_config_t std_cfg = {
         .clk_cfg = I2S_STD_CLK_DEFAULT_CONFIG(44100),
@@ -336,13 +358,16 @@ esp_err_t board_audio_init(void)
             .bclk = BOARD_I2S_BCLK,
             .ws = BOARD_I2S_LRCK,
             .dout = BOARD_I2S_DOUT,
-            .din = I2S_GPIO_UNUSED,
+            .din = BOARD_I2S_DIN,
         },
     };
     std_cfg.clk_cfg.mclk_multiple = I2S_MCLK_MULTIPLE_256;
-    ESP_RETURN_ON_ERROR(i2s_channel_init_std_mode(tx, &std_cfg), TAG, "i2s std");
+    ESP_RETURN_ON_ERROR(i2s_channel_init_std_mode(tx, &std_cfg), TAG, "i2s std tx");
+    ESP_RETURN_ON_ERROR(i2s_channel_init_std_mode(rx, &std_cfg), TAG, "i2s std rx");
+    /* MCLK must be running before the ES8311 is configured */
+    ESP_RETURN_ON_ERROR(i2s_channel_enable(tx), TAG, "i2s enable");
 
-    audio_codec_i2s_cfg_t i2s_if_cfg = { .port = I2S_NUM_0, .tx_handle = tx, .rx_handle = NULL };
+    audio_codec_i2s_cfg_t i2s_if_cfg = { .port = I2S_NUM_0, .tx_handle = tx, .rx_handle = rx };
     const audio_codec_data_if_t *data_if = audio_codec_new_i2s_data(&i2s_if_cfg);
 
     audio_codec_i2c_cfg_t i2c_if_cfg = {
@@ -357,12 +382,11 @@ esp_err_t board_audio_init(void)
     es8311_codec_cfg_t es_cfg = {
         .ctrl_if = ctrl_if,
         .gpio_if = gpio_if,
-        .codec_mode = ESP_CODEC_DEV_WORK_MODE_DAC,
+        .codec_mode = ESP_CODEC_DEV_WORK_MODE_BOTH,
         .pa_pin = CONFIG_RADIO_PA_GPIO,
         .pa_reverted = false,
         .master_mode = false,
         .use_mclk = true,
-        .hw_gain = { .pa_voltage = 5.0, .codec_dac_voltage = 3.3 },
     };
     const audio_codec_if_t *codec_if = es8311_codec_new(&es_cfg);
     ESP_RETURN_ON_FALSE(codec_if, ESP_FAIL, TAG, "ES8311 not responding on I2C");
@@ -399,6 +423,7 @@ esp_err_t board_audio_open(uint32_t sample_rate)
     }
     esp_codec_dev_set_out_vol(s_spk, s_volume);
     s_spk_open = true;
+
     s_spk_rate = sample_rate;
     ESP_LOGI(TAG, "audio out %lu Hz", (unsigned long)sample_rate);
     return ESP_OK;

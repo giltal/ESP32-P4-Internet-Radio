@@ -5,8 +5,8 @@
  *   LCD     : MIPI-DSI 2 lanes, JD9165, reset GPIO5 (V1 panel) or GPIO0 (V2 panel)
  *   Backlight: GPIO23 (PWM)
  *   I2C     : SDA GPIO7, SCL GPIO8 (GT911 touch + ES8311 codec)
- *   I2S     : MCLK 13, BCLK 12, LRCK 10, DOUT 9, DIN 48
- *   Speaker : NS4150 amplifier enable on GPIO11
+ *   I2S     : MCLK 13, BCLK 12, LRCK 10, DOUT 9, DIN 11
+ *   Speaker : NS4150 amplifier enable on GPIO20 (per Guition's JC1060P470C_I_W board config)
  *   Wi-Fi   : ESP32-C6 over SDIO (CLK 18, CMD 19, D0-D3 14-17, C6 reset 54) via esp_hosted
  */
 #pragma once
@@ -30,7 +30,7 @@ extern "C" {
 #define BOARD_I2S_BCLK         12
 #define BOARD_I2S_LRCK         10
 #define BOARD_I2S_DOUT         9
-#define BOARD_I2S_DIN          48
+#define BOARD_I2S_DIN          11
 
 /** Bring up I2C, display, touch and LVGL. Returns the LVGL display. */
 esp_err_t board_display_init(lv_display_t **out_disp);

@@ -19,11 +19,11 @@ Stations come from [radio-browser.info](https://www.radio-browser.info), filtere
 
 | Function | Pins |
 |---|---|
-| LCD | MIPI-DSI 2-lane, JD9165, reset GPIO5 (V1) / GPIO0 (V2) |
+| LCD | MIPI-DSI 2-lane, JD9165, reset GPIO27 (V1) / GPIO0 (V2) |
 | Backlight | GPIO23 (PWM) |
 | I2C (touch + codec) | SDA 7, SCL 8 — GT911 @ 0x5D/0x14, ES8311 @ 0x18 |
-| I2S | MCLK 13, BCLK 12, LRCK 10, DOUT 9 |
-| Speaker amp enable | GPIO11 |
+| I2S | MCLK 13, BCLK 12, LRCK 10, DOUT 9, DIN 11 |
+| Speaker amp enable | GPIO20 |
 | ESP32-C6 (Wi-Fi) | SDIO: CLK 18, CMD 19, D0–D3 14–17, reset 54 |
 
 Things to check on your unit:
