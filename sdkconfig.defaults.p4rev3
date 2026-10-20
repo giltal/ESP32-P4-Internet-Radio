@@ -1,0 +1,6 @@
+# Overlay for boards with an ESP32-P4 revision v3.x chip.
+# Build with:
+#   idf.py -D SDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.defaults.p4rev3" build
+# (delete sdkconfig first so the change takes effect)
+CONFIG_ESP32P4_SELECTS_REV_LESS_V3=n
+CONFIG_ESP32P4_REV_MIN_300=y

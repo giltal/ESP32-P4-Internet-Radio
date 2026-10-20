@@ -1,0 +1,52 @@
+# ---- Target / chip ---------------------------------------------------------
+CONFIG_IDF_TARGET="esp32p4"
+# Most JC1060P470C boards carry an ESP32-P4 revision v1.x chip.
+# If your boot log says "chip revision: v3.x", build with sdkconfig.defaults.p4rev3
+# (see README).
+CONFIG_ESP32P4_SELECTS_REV_LESS_V3=y
+CONFIG_ESP32P4_REV_MIN_1=y
+CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ_360=y
+
+# ---- Flash / partitions ----------------------------------------------------
+CONFIG_ESPTOOLPY_FLASHSIZE_16MB=y
+CONFIG_PARTITION_TABLE_CUSTOM=y
+CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions.csv"
+CONFIG_COMPILER_OPTIMIZATION_PERF=y
+
+# ---- PSRAM (32 MB, HEX mode) ------------------------------------------------
+CONFIG_SPIRAM=y
+CONFIG_SPIRAM_SPEED_200M=y
+CONFIG_SPIRAM_USE_MALLOC=y
+
+# ---- FreeRTOS / system -------------------------------------------------------
+CONFIG_FREERTOS_HZ=1000
+CONFIG_ESP_MAIN_TASK_STACK_SIZE=8192
+
+# ---- Wi-Fi via the on-board ESP32-C6 (esp_hosted over SDIO) ----------------
+CONFIG_SLAVE_IDF_TARGET_ESP32C6=y
+CONFIG_ESP_HOSTED_SDIO_HOST_INTERFACE=y
+# Same SDIO wiring as Espressif's P4 Function EV board:
+# CLK 18, CMD 19, D0-D3 14-17, C6 reset 54
+CONFIG_ESP_HOSTED_P4_DEV_BOARD_FUNC_BOARD=y
+
+# ---- Networking / TLS --------------------------------------------------------
+CONFIG_LWIP_TCP_WND_DEFAULT=32768
+CONFIG_LWIP_TCP_RECVMBOX_SIZE=32
+CONFIG_MBEDTLS_EXTERNAL_MEM_ALLOC=y
+CONFIG_MBEDTLS_DYNAMIC_BUFFER=y
+CONFIG_MBEDTLS_CERTIFICATE_BUNDLE=y
+CONFIG_MBEDTLS_CERTIFICATE_BUNDLE_DEFAULT_FULL=y
+CONFIG_ESP_HTTP_CLIENT_ENABLE_HTTPS=y
+
+# ---- LVGL ----------------------------------------------------------------------
+CONFIG_LV_COLOR_DEPTH_16=y
+CONFIG_LV_DEF_REFR_PERIOD=20
+CONFIG_LV_USE_CLIB_MALLOC=y
+CONFIG_LV_USE_CLIB_STRING=y
+CONFIG_LV_USE_CLIB_SPRINTF=y
+# Hebrew / Arabic text: bidirectional layout + Arabic letter shaping
+CONFIG_LV_USE_BIDI=y
+CONFIG_LV_BIDI_DIR_AUTO=y
+CONFIG_LV_USE_ARABIC_PERSIAN_CHARS=y
+CONFIG_LV_FONT_MONTSERRAT_14=y
+CONFIG_LV_USE_PERF_MONITOR=n

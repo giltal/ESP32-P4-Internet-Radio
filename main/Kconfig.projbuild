@@ -1,0 +1,87 @@
+menu "Internet Radio (JC1060P470C)"
+
+    menu "Wi-Fi"
+        config RADIO_WIFI_SSID
+            string "Default Wi-Fi SSID"
+            default ""
+            help
+                Used on first boot. Networks chosen on the touch screen are
+                saved to NVS and take precedence.
+
+        config RADIO_WIFI_PASSWORD
+            string "Default Wi-Fi password"
+            default ""
+    endmenu
+
+    menu "Display panel"
+        choice RADIO_PANEL_VARIANT
+            prompt "LCD panel variant"
+            default RADIO_PANEL_V1
+            help
+                Guition switched to a different 7" panel in 2026. Boards from that
+                batch have "V2" printed after the material number on the rear label.
+                If the screen stays black or shows noise, try the other variant.
+
+            config RADIO_PANEL_V1
+                bool "Original panel (no V2 on the label)"
+            config RADIO_PANEL_V2
+                bool "V2 panel (2026 batch)"
+        endchoice
+
+        config RADIO_LCD_RST_GPIO
+            int "LCD reset GPIO (-1 = not used)"
+            range -1 54
+            default 0 if RADIO_PANEL_V2
+            default 5
+
+        config RADIO_BL_GPIO
+            int "Backlight PWM GPIO"
+            range 0 54
+            default 23
+
+        config RADIO_BL_ACTIVE_LOW
+            bool "Backlight PWM is active-low"
+            default n
+            help
+                Enable if the screen gets darker when you raise the brightness.
+
+        config RADIO_TOUCH_SWAP_XY
+            bool "Touch: swap X/Y"
+            default n
+        config RADIO_TOUCH_MIRROR_X
+            bool "Touch: mirror X"
+            default n
+        config RADIO_TOUCH_MIRROR_Y
+            bool "Touch: mirror Y"
+            default n
+    endmenu
+
+    menu "Audio"
+        config RADIO_PA_GPIO
+            int "Speaker amplifier (NS4150) enable GPIO"
+            range -1 54
+            default 11
+
+        config RADIO_STREAM_BUFFER_KB
+            int "Stream buffer size in PSRAM (KB)"
+            range 64 2048
+            default 384
+
+        config RADIO_PREBUFFER_KB
+            int "Data to buffer before playback starts (KB)"
+            range 8 512
+            default 48
+    endmenu
+
+    menu "Station directory"
+        config RADIO_COUNTRY_CODE
+            string "Country code for radio-browser.info"
+            default "IL"
+
+        config RADIO_MAX_STATIONS
+            int "Maximum stations to keep"
+            range 20 500
+            default 200
+    endmenu
+
+endmenu
