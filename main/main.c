@@ -4,6 +4,7 @@
  * Boot order: NVS -> display/UI -> audio -> Wi-Fi (ESP32-C6 over SDIO)
  *             -> station directory refresh -> resume last station.
  */
+#include <string.h>
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "esp_log.h"
@@ -12,6 +13,7 @@
 #include "esp_lvgl_port.h"
 #include "board.h"
 #include "player.h"
+#include "sdcard.h"
 #include "station_db.h"
 #include "wifi_mgr.h"
 #include "ui.h"
@@ -41,6 +43,13 @@ void app_main(void)
     lvgl_port_lock(0);
     ui_init(disp);
     lvgl_port_unlock();
+
+    /* Wi-Fi credentials from /sdcard/WiFi.txt win over what NVS holds */
+    char ssid[33], pass[65];
+    if (sdcard_read_wifi(ssid, sizeof(ssid), pass, sizeof(pass)) == ESP_OK) {
+        wifi_mgr_preset(ssid, pass);
+    }
+    memset(pass, 0, sizeof(pass));
 
     ESP_ERROR_CHECK(wifi_mgr_start());
 

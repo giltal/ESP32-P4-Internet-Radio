@@ -5,7 +5,8 @@ dependencies:
   # Display, touch, UI
   espressif/esp_lcd_jd9165: "^2.0.2"
   espressif/esp_lcd_touch_gt911: "^1.1.3"
-  espressif/esp_lvgl_port: "^2.6.0"
+  # 2.9+ needs the on_frame_buf_complete DPI callback from IDF > 5.5.2
+  espressif/esp_lvgl_port: "~2.8.0"
   lvgl/lvgl: "~9.4.0"
 
   # Audio: ES8311 codec driver + MP3/AAC decoders

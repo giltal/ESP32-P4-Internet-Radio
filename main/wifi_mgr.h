@@ -26,6 +26,12 @@ typedef struct {
     bool secure;
 } wifi_ap_info_t;
 
+/**
+ * Store credentials in NVS before wifi_mgr_start() (e.g. from the SD card).
+ * NVS is only written when they differ from what is already saved.
+ */
+esp_err_t wifi_mgr_preset(const char *ssid, const char *password);
+
 esp_err_t wifi_mgr_start(void);
 
 wifi_state_t wifi_mgr_state(void);

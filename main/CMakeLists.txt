@@ -4,6 +4,7 @@ idf_component_register(
         "board.c"
         "byte_ring.c"
         "player.c"
+        "sdcard.c"
         "station_db.c"
         "wifi_mgr.c"
         "ui.c"
@@ -14,7 +15,7 @@ idf_component_register(
     REQUIRES
         nvs_flash esp_http_client esp-tls esp_netif esp_wifi esp_event esp_timer
         esp_lcd esp_driver_i2c esp_driver_i2s esp_driver_ledc esp_driver_gpio
-        json mbedtls
+        json mbedtls fatfs sdmmc esp_driver_sdmmc
 )
 
 # The generated font files include "lvgl.h" directly when this is defined

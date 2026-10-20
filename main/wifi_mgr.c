@@ -145,10 +145,8 @@ int wifi_mgr_rssi(void)
     return 0;
 }
 
-esp_err_t wifi_mgr_connect(const char *ssid, const char *password)
+static void save_credentials(void)
 {
-    strlcpy(s_ssid, ssid, sizeof(s_ssid));
-    strlcpy(s_pass, password ? password : "", sizeof(s_pass));
     nvs_handle_t h;
     if (nvs_open(NVS_NS, NVS_READWRITE, &h) == ESP_OK) {
         nvs_set_str(h, "ssid", s_ssid);
@@ -156,6 +154,26 @@ esp_err_t wifi_mgr_connect(const char *ssid, const char *password)
         nvs_commit(h);
         nvs_close(h);
     }
+}
+
+esp_err_t wifi_mgr_preset(const char *ssid, const char *password)
+{
+    load_credentials();
+    if (strcmp(s_ssid, ssid) == 0 && strcmp(s_pass, password ? password : "") == 0) {
+        return ESP_OK;              /* already stored - spare the flash */
+    }
+    strlcpy(s_ssid, ssid, sizeof(s_ssid));
+    strlcpy(s_pass, password ? password : "", sizeof(s_pass));
+    save_credentials();
+    ESP_LOGI(TAG, "stored credentials for %s", s_ssid);
+    return ESP_OK;
+}
+
+esp_err_t wifi_mgr_connect(const char *ssid, const char *password)
+{
+    strlcpy(s_ssid, ssid, sizeof(s_ssid));
+    strlcpy(s_pass, password ? password : "", sizeof(s_pass));
+    save_credentials();
     ESP_LOGI(TAG, "switching to %s", s_ssid);
     xEventGroupClearBits(s_ev, EV_CONNECTED);
     s_state = WIFI_STATE_CONNECTING;
