@@ -18,10 +18,12 @@
 
 static const char *TAG = "nowplaying";
 
-#define MIN_POLL_MS   20000     /* Cloudflare guards kan.org.il: keep requests sparse */
+#define MIN_POLL_MS   45000     /* Cloudflare guards kan.org.il: keep requests sparse */
 #define MAX_POLL_MS   120000
-#define BLOCKED_MS    (15 * 60 * 1000)   /* after a Cloudflare 403: back off, don't make it worse */
-#define MIN_GAP_MS    15000              /* between any two requests, even when stations change fast */
+#define BLOCKED_MIN_MS 60000             /* after a Cloudflare 403: back off 1, 2, 4, 8 .. 15 min */
+#define BLOCKED_MAX_MS (15 * 60 * 1000)
+#define KEEP_AFTER_END 30                 /* s: keep the last title this long past its end time on errors */
+#define MIN_GAP_MS    30000              /* between any two requests, even when stations change fast */
 #define BODY_MAX      4096
 
 /* Kan stream mount -> kan.org.il live-track channel id */
@@ -41,6 +43,8 @@ static TaskHandle_t s_task;
 static char s_url[sizeof(((station_t *)0)->url)];
 static int s_channel;               /* 0 = nothing to follow */
 static uint32_t s_gen;              /* bumped on every station change */
+static uint32_t s_blocked_ms;       /* current 403 back-off, 0 = not blocked */
+static time_t s_title_end;          /* end time of the title currently shown (0 = unknown / none) */
 
 static int kan_channel(const char *url)
 {
@@ -110,16 +114,32 @@ static uint32_t poll_kan(int channel, const char *station_url)
     uint32_t next = MAX_POLL_MS / 2;
     if (err != ESP_OK || status != 200) {
         /* 204 = no song info right now (talk show); anything else = try again later */
-        if (status == 403) {
-            ESP_LOGW(TAG, "Kan channel %d: blocked by Cloudflare (403), retrying in 15 min", channel);
-        } else if (status != 204) {
-            ESP_LOGW(TAG, "Kan channel %d: %s, HTTP %d", channel, esp_err_to_name(err), status);
-        }
-        player_set_web_title(station_url, "");
         free(buf);
-        return status == 403 ? BLOCKED_MS : status == 204 ? MAX_POLL_MS / 2 : MAX_POLL_MS;
+        if (status == 204) {
+            s_blocked_ms = 0;
+            s_title_end = 0;
+            player_set_web_title(station_url, "");      /* talk / no song: really nothing to show */
+            return MAX_POLL_MS / 2;
+        }
+        /* blocked or network trouble: keep the last song until it should have ended */
+        if (!s_title_end || !clock_is_valid() || time(NULL) > s_title_end + KEEP_AFTER_END) {
+            s_title_end = 0;
+            player_set_web_title(station_url, "");
+        }
+        if (status == 403) {
+            s_blocked_ms = s_blocked_ms ? s_blocked_ms * 2 : BLOCKED_MIN_MS;
+            if (s_blocked_ms > BLOCKED_MAX_MS) {
+                s_blocked_ms = BLOCKED_MAX_MS;
+            }
+            ESP_LOGW(TAG, "Kan channel %d: blocked by Cloudflare (403), retrying in %lu s",
+                     channel, (unsigned long)(s_blocked_ms / 1000));
+            return s_blocked_ms;
+        }
+        ESP_LOGW(TAG, "Kan channel %d: %s, HTTP %d", channel, esp_err_to_name(err), status);
+        return MIN_POLL_MS * 2;
     }
 
+    s_blocked_ms = 0;
     cJSON *root = cJSON_Parse(buf);
     const cJSON *title = cJSON_GetObjectItem(root, "title");
     const cJSON *artists = cJSON_GetObjectItem(root, "artists");
@@ -145,11 +165,13 @@ static uint32_t poll_kan(int channel, const char *station_url)
         const cJSON *end = cJSON_GetObjectItem(root, "endTime");
         const cJSON *delay = cJSON_GetObjectItem(root, "delayTime");
         time_t end_t = parse_iso_utc(cJSON_IsString(end) ? end->valuestring : NULL);
+        s_title_end = end_t;
         if (end_t && clock_is_valid()) {
             long ms = (long)(end_t - time(NULL)) * 1000 + (cJSON_IsNumber(delay) ? delay->valueint : 5000);
             next = ms < MIN_POLL_MS ? MIN_POLL_MS : ms > MAX_POLL_MS ? MAX_POLL_MS : (uint32_t)ms;
         }
     } else {
+        s_title_end = 0;
         player_set_web_title(station_url, "");
     }
     cJSON_Delete(root);
@@ -200,6 +222,7 @@ void nowplaying_track(const station_t *st)
     }
     xSemaphoreTake(s_lock, portMAX_DELAY);
     s_channel = st ? kan_channel(st->url) : 0;
+    s_title_end = 0;
     strlcpy(s_url, st ? st->url : "", sizeof(s_url));
     s_gen++;
     xSemaphoreGive(s_lock);
