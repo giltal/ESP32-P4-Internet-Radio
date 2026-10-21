@@ -31,7 +31,7 @@ import adsk.core, adsk.fusion, math
 PCB_W, PCB_H = 165.0, 104.0        # PCB outline (touch glass is 165.0 x 100.3)
 STACK = 7.0                        # glass front -> PCB back (TP 1.6 + LCD 3.5 + PCB 1.6 + glue)
 MOUNT_DX, MOUNT_DY = 90.0, 52.0    # inner M2 holes with brass standoffs, centred on the PCB
-STANDOFF_H = 3.0                   # brass standoff height above the PCB back             (CHECK)
+STANDOFF_H = 3.0                   # brass standoff height above the PCB back (measured)
 STANDOFF_D = 3.5                   # (reference body only)
 AA_W, AA_H = 154.21, 85.92         # active area
 AA_LEFT, AA_BOTTOM = 4.3, 10.1     # active area offset from the PCB's left / bottom edge  (CHECK)
