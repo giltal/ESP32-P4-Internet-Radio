@@ -159,6 +159,14 @@ static void start_station(station_list_t list, int index)
     if (!station_db_get(list, index, &st)) {
         return;
     }
+    player_status_t ps;
+    player_get_status(&ps);
+    bool active = ps.state == PLAYER_CONNECTING || ps.state == PLAYER_BUFFERING || ps.state == PLAYER_PLAYING;
+    if (active && s_have_current && strcmp(st.url, s_current.url) == 0) {
+        s_current_list = list;      /* already playing: just remember where it was picked */
+        s_current_index = index;
+        return;
+    }
     s_current = st;
     s_have_current = true;
     s_current_list = list;

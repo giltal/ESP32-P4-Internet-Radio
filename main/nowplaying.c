@@ -12,6 +12,7 @@
 #include "esp_crt_bundle.h"
 #include "esp_http_client.h"
 #include "esp_log.h"
+#include "esp_timer.h"
 #include "clock.h"
 #include "player.h"
 
@@ -20,6 +21,7 @@ static const char *TAG = "nowplaying";
 #define MIN_POLL_MS   20000     /* Cloudflare guards kan.org.il: keep requests sparse */
 #define MAX_POLL_MS   120000
 #define BLOCKED_MS    (15 * 60 * 1000)   /* after a Cloudflare 403: back off, don't make it worse */
+#define MIN_GAP_MS    15000              /* between any two requests, even when stations change fast */
 #define BODY_MAX      4096
 
 /* Kan stream mount -> kan.org.il live-track channel id */
@@ -170,6 +172,14 @@ static void nowplaying_task(void *arg)
             wait_ms = portMAX_DELAY;
             continue;
         }
+        /* quick station hopping must not turn into a burst of requests */
+        static int64_t s_last_req_us;
+        int64_t since_ms = (esp_timer_get_time() - s_last_req_us) / 1000;
+        if (s_last_req_us && since_ms < MIN_GAP_MS) {
+            wait_ms = MIN_GAP_MS - since_ms;    /* a newer station change wakes us early and re-checks */
+            continue;
+        }
+        s_last_req_us = esp_timer_get_time();
         uint32_t next = poll_kan(channel, url);
         /* a station change during the request restarts the cycle immediately */
         wait_ms = gen == s_gen ? next : 0;
