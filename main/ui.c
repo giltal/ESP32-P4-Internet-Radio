@@ -305,7 +305,7 @@ static void update_logo(void)
         return;
     }
     s_logo_rev_seen = rev;
-    if (s_have_current && s_logo_px && logo_copy(s_current.logo, s_logo_px)) {
+    if (s_have_current && s_logo_px && logo_copy(logo_url_for(s_current.url, s_current.logo), s_logo_px)) {
         lv_image_set_src(s_logo_img, &s_logo_dsc);
         lv_obj_invalidate(s_logo_img);
         lv_obj_remove_flag(s_logo_img, LV_OBJ_FLAG_HIDDEN);
@@ -319,7 +319,7 @@ static void update_logo(void)
 static void update_now_playing_header(void)
 {
     if (s_have_current) {
-        logo_request(s_current.logo);
+        logo_request(logo_url_for(s_current.url, s_current.logo));
     }
     show_badge();   /* until this station's logo is ready */
     if (!s_have_current) {

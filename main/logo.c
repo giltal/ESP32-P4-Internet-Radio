@@ -28,6 +28,32 @@ typedef struct {
     uint16_t w, h;
 } thumb_hdr_t;
 
+/*
+ * Stations that only publish SVG logos: Wikimedia Commons renders those to PNG
+ * (250 px thumbnails of the logo files on commons.wikimedia.org).
+ */
+static const struct {
+    const char *stream;         /* substring of the stream URL */
+    const char *png;
+} s_overrides[] = {
+    { "KAN_GIMMEL", "https://upload.wikimedia.org/wikipedia/commons/thumb/3/39/KanGimel.svg/250px-KanGimel.svg.png" },
+    { "KAN_88", "https://upload.wikimedia.org/wikipedia/commons/thumb/0/0b/Kan88.svg/250px-Kan88.svg.png" },
+    { "KAN_BET", "https://upload.wikimedia.org/wikipedia/commons/thumb/4/49/KanReshetBetLogo.svg/250px-KanReshetBetLogo.svg.png" },
+    { "kan_reshet_bet", "https://upload.wikimedia.org/wikipedia/commons/thumb/4/49/KanReshetBetLogo.svg/250px-KanReshetBetLogo.svg.png" },
+    { "KAN_TARBUT", "https://upload.wikimedia.org/wikipedia/commons/thumb/e/ed/KanTarbutNewLogo.svg/250px-KanTarbutNewLogo.svg.png" },
+    { "glglz", "https://upload.wikimedia.org/wikipedia/commons/thumb/e/e2/GLGLZ.svg/250px-GLGLZ.svg.png" },
+};
+
+const char *logo_url_for(const char *stream_url, const char *favicon)
+{
+    for (size_t i = 0; stream_url && i < sizeof(s_overrides) / sizeof(s_overrides[0]); i++) {
+        if (strstr(stream_url, s_overrides[i].stream)) {
+            return s_overrides[i].png;
+        }
+    }
+    return favicon ? favicon : "";
+}
+
 static QueueHandle_t s_q;
 static SemaphoreHandle_t s_lock;
 static uint8_t *s_thumb;            /* PSRAM, THUMB_BYTES */
@@ -253,7 +279,7 @@ static uint8_t *download(const char *url, size_t *len)
         .url = url,
         .timeout_ms = 8000,
         .crt_bundle_attach = esp_crt_bundle_attach,
-        .user_agent = "Mozilla/5.0 (ESP32-P4-Internet-Radio)",
+        .user_agent = "ESP32-P4-Internet-Radio/1.0 (logo fetch; https://github.com/giltal/ESP32-P4-Internet-Radio)",
         .event_handler = dl_event,
         .user_data = &d,
         .max_redirection_count = 5,

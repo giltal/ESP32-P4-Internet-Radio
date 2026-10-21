@@ -16,6 +16,12 @@ extern "C" {
 
 void logo_init(void);
 
+/**
+ * Logo URL to use for a station: a PNG override for stations whose own logo is
+ * SVG-only (Kan, Galgalatz), otherwise the radio-browser favicon.
+ */
+const char *logo_url_for(const char *stream_url, const char *favicon);
+
 /** Fetch the logo for this URL in the background (empty URL = no logo). */
 void logo_request(const char *url);
 
