@@ -18,6 +18,7 @@
 #include "player.h"
 #include "clock.h"
 #include "logo.h"
+#include "weather.h"
 #include "nowplaying.h"
 #include "sdcard.h"
 #include "station_db.h"
@@ -61,6 +62,7 @@ void app_main(void)
     station_db_load();
     player_load_settings();
     clock_load_settings();
+    weather_init();
     lvgl_port_lock(0);
     ui_load_settings();
     lvgl_port_unlock();
@@ -78,6 +80,7 @@ void app_main(void)
 
     /* First boot, or the cached directory is getting old: fetch a fresh one */
     station_db_refresh_async();
+    weather_refresh();
     ui_resume_last_station();
 
     /* Refresh the directory once a day so moved stream URLs heal themselves */

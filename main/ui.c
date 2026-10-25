@@ -2,6 +2,7 @@
 
 #include <stdio.h>
 #include <string.h>
+#include <math.h>
 #include <time.h>
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -14,6 +15,7 @@
 #include "sdcard.h"
 #include "station_db.h"
 #include "ui_common.h"
+#include "weather.h"
 #include "wifi_mgr.h"
 
 static const char *TAG = "ui";
@@ -64,6 +66,15 @@ static lv_obj_t *s_wifi_status_lbl;
 static lv_obj_t *s_bl_slider;
 static lv_obj_t *s_dd_day, *s_dd_mon, *s_dd_year, *s_dd_hour, *s_dd_min;
 static lv_obj_t *s_sw_ntp;
+
+/* weather */
+#define WX_ROWS 5
+static lv_obj_t *s_list_foot;
+static lv_obj_t *s_wx_hdr_icon, *s_wx_hdr_temp;
+static lv_obj_t *s_wx_place, *s_wx_icon, *s_wx_temp, *s_wx_desc, *s_wx_extra;
+static lv_obj_t *s_wx_day[WX_ROWS], *s_wx_dicon[WX_ROWS], *s_wx_range[WX_ROWS], *s_wx_rain[WX_ROWS];
+static lv_obj_t *s_wx_city_ta, *s_wx_city_lbl;
+static uint32_t s_wx_rev_seen = UINT32_MAX;
 
 /* ---- state ---- */
 static station_t s_current;
@@ -563,10 +574,18 @@ static void ta_focus_cb(lv_event_t *e)
     ui_keyboard_attach(s_kb, s_pass_ta, false);
 }
 
+static void wx_search_cb(lv_event_t *e);
+static void update_weather(void);
+
 static void kb_done_cb(lv_event_t *e)
 {
+    bool city = lv_keyboard_get_textarea(s_kb) == s_wx_city_ta;
     lv_obj_add_flag(s_kb, LV_OBJ_FLAG_HIDDEN);
     lv_obj_remove_state(s_pass_ta, LV_STATE_FOCUSED);
+    lv_obj_remove_state(s_wx_city_ta, LV_STATE_FOCUSED);
+    if (city && lv_event_get_code(e) == LV_EVENT_READY) {
+        wx_search_cb(e);    /* Enter on the keyboard = search */
+    }
 }
 
 static void connect_btn_cb(lv_event_t *e)
@@ -778,6 +797,25 @@ static void build_clock_tab(lv_obj_t *tab)
     lv_obj_set_style_text_align(note, LV_TEXT_ALIGN_RIGHT, 0);
 }
 
+static void wx_city_focus_cb(lv_event_t *e)
+{
+    ui_keyboard_attach(s_kb, s_wx_city_ta, true);   /* Hebrew layout first */
+}
+
+static void wx_search_cb(lv_event_t *e)
+{
+    const char *q = lv_textarea_get_text(s_wx_city_ta);
+    if (!q[0]) {
+        return;
+    }
+    if (wifi_mgr_state() != WIFI_STATE_CONNECTED) {
+        ui_toast("אין חיבור לרשת WiFi", COL_ERR);
+        return;
+    }
+    weather_search_city(q);
+    lv_obj_add_flag(s_kb, LV_OBJ_FLAG_HIDDEN);
+}
+
 static void build_display_tab(lv_obj_t *tab)
 {
     lv_obj_t *r = setting_row(tab, "בהירות מסך");
@@ -789,8 +827,23 @@ static void build_display_tab(lv_obj_t *tab)
     lv_obj_add_event_cb(s_bl_slider, bl_cb, LV_EVENT_VALUE_CHANGED, NULL);
     lv_obj_add_event_cb(s_bl_slider, bl_cb, LV_EVENT_RELEASED, NULL);
 
+    r = setting_row(tab, "עיר למזג האוויר");
+    s_wx_city_ta = lv_textarea_create(r);
+    lv_textarea_set_one_line(s_wx_city_ta, true);
+    lv_textarea_set_placeholder_text(s_wx_city_ta, "שם עיר");
+    lv_obj_set_style_text_font(s_wx_city_ta, &g_font32, 0);
+    lv_obj_set_style_base_dir(s_wx_city_ta, LV_BASE_DIR_AUTO, 0);
+    lv_obj_set_width(s_wx_city_ta, 300);
+    lv_obj_add_event_cb(s_wx_city_ta, wx_city_focus_cb, LV_EVENT_FOCUSED, NULL);
+    lv_obj_add_event_cb(s_wx_city_ta, wx_city_focus_cb, LV_EVENT_CLICKED, NULL);
+    lv_obj_t *find = make_text_button(r, LV_SYMBOL_REFRESH "  חיפוש", COL_ACCENT, lv_color_hex(0x1A1200), 150, 56);
+    lv_obj_add_event_cb(find, wx_search_cb, LV_EVENT_CLICKED, NULL);
+    s_wx_city_lbl = ui_label(tab, &g_font22, COL_DIM, "");
+    lv_obj_set_width(s_wx_city_lbl, lv_pct(100));
+    lv_obj_set_style_text_align(s_wx_city_lbl, LV_TEXT_ALIGN_RIGHT, 0);
+
     lv_obj_t *about = ui_label(tab, &g_font22, COL_DIM,
-                               "תחנות: radio-browser.info  ·  MP3 / AAC / HE-AAC  ·  Guition JC1060P470C");
+                               "תחנות: radio-browser.info  ·  מזג אוויר: Open-Meteo  ·  Guition JC1060P470C");
     lv_obj_set_width(about, lv_pct(100));
     lv_obj_set_style_text_align(about, LV_TEXT_ALIGN_RIGHT, 0);
 }
@@ -891,6 +944,7 @@ static void tick_cb(lv_timer_t *t)
 
     update_player();
     update_logo();
+    update_weather();
 
     for (int l = 0; l < 2; l++) {
         uint32_t rev = station_db_revision((station_list_t)l);
@@ -924,6 +978,12 @@ static void tick_cb(lv_timer_t *t)
 
 /* ------------------------------------------------------------------ */
 
+static void wx_hdr_cb(lv_event_t *e)
+{
+    lv_tabview_set_active(s_tabview, 2, LV_ANIM_ON);
+    lv_obj_add_flag(s_list_foot, LV_OBJ_FLAG_HIDDEN);
+}
+
 static void build_header(lv_obj_t *scr)
 {
     /* Big clock in the middle; weekday + full date on the left; settings + Wi-Fi on the right */
@@ -943,6 +1003,136 @@ static void build_header(lv_obj_t *scr)
 
     s_wifi_icon = ui_label(scr, &g_font32, COL_DIM, LV_SYMBOL_WIFI);
     ui_align(s_wifi_icon, LV_ALIGN_TOP_RIGHT, -108, 50);
+
+    /* current weather: tap to open the weather tab */
+    lv_obj_t *wx = lv_obj_create(scr);
+    lv_obj_remove_style_all(wx);
+    lv_obj_set_size(wx, LV_SIZE_CONTENT, 56);
+    lv_obj_set_flex_flow(wx, LV_FLEX_FLOW_ROW);
+    lv_obj_set_flex_align(wx, LV_FLEX_ALIGN_END, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+    lv_obj_set_style_pad_column(wx, 10, 0);
+    lv_obj_set_style_base_dir(wx, LV_BASE_DIR_LTR, 0);
+    lv_obj_add_flag(wx, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_add_event_cb(wx, wx_hdr_cb, LV_EVENT_CLICKED, NULL);
+    s_wx_hdr_icon = ui_label(wx, &font_wx_32, COL_ACCENT, "");
+    s_wx_hdr_temp = ui_label(wx, &g_font32, COL_TEXT, "");
+    ui_align(wx, LV_ALIGN_TOP_RIGHT, -160, 38);
+}
+
+static void tab_changed_cb(lv_event_t *e)
+{
+    if (lv_tabview_get_tab_active(s_tabview) == 2) {
+        lv_obj_add_flag(s_list_foot, LV_OBJ_FLAG_HIDDEN);
+    } else {
+        lv_obj_remove_flag(s_list_foot, LV_OBJ_FLAG_HIDDEN);
+    }
+}
+
+static void build_weather_tab(lv_obj_t *tab)
+{
+    lv_obj_set_style_pad_all(tab, 8, 0);
+    lv_obj_remove_flag(tab, LV_OBJ_FLAG_SCROLLABLE);
+
+    s_wx_place = ui_label(tab, &g_font22, COL_DIM, "");
+    lv_obj_set_width(s_wx_place, lv_pct(100));
+    lv_obj_set_style_text_align(s_wx_place, LV_TEXT_ALIGN_RIGHT, 0);
+    lv_label_set_long_mode(s_wx_place, LV_LABEL_LONG_MODE_DOTS);
+    ui_align(s_wx_place, LV_ALIGN_TOP_RIGHT, 0, 0);
+
+    /* now: icon + temperature on the right, description + humidity / wind on the left */
+    s_wx_icon = ui_label(tab, &font_wx_64, COL_ACCENT, "");
+    ui_align(s_wx_icon, LV_ALIGN_TOP_RIGHT, -4, 36);
+    s_wx_temp = ui_label(tab, &g_font48, COL_TEXT, "--°");
+    lv_obj_set_style_base_dir(s_wx_temp, LV_BASE_DIR_LTR, 0);
+    ui_align(s_wx_temp, LV_ALIGN_TOP_RIGHT, -96, 36);
+    s_wx_desc = ui_label(tab, &g_font32, COL_TEXT, "");
+    ui_align(s_wx_desc, LV_ALIGN_TOP_LEFT, 4, 36);
+    s_wx_extra = ui_label(tab, &g_font22, COL_DIM, "");
+    ui_align(s_wx_extra, LV_ALIGN_TOP_LEFT, 4, 82);
+
+    lv_obj_t *sep = lv_obj_create(tab);
+    lv_obj_remove_style_all(sep);
+    lv_obj_set_size(sep, lv_pct(100), 2);
+    lv_obj_set_style_bg_color(sep, COL_CARD2, 0);
+    lv_obj_set_style_bg_opa(sep, LV_OPA_COVER, 0);
+    ui_align(sep, LV_ALIGN_TOP_MID, 0, 120);
+
+    /* forecast rows: day | icon | high / low ............ rain % */
+    for (int i = 0; i < WX_ROWS; i++) {
+        int y = 130 + i * 46;
+        s_wx_day[i] = ui_label(tab, &g_font22, COL_TEXT, "");
+        lv_obj_set_width(s_wx_day[i], 80);
+        lv_obj_set_style_text_align(s_wx_day[i], LV_TEXT_ALIGN_RIGHT, 0);
+        ui_align(s_wx_day[i], LV_ALIGN_TOP_RIGHT, 0, y + 8);
+        s_wx_dicon[i] = ui_label(tab, &font_wx_32, COL_ACCENT, "");
+        ui_align(s_wx_dicon[i], LV_ALIGN_TOP_RIGHT, -96, y + 2);
+        s_wx_range[i] = ui_label(tab, &g_font22, COL_TEXT, "");
+        lv_obj_set_style_base_dir(s_wx_range[i], LV_BASE_DIR_LTR, 0);
+        ui_align(s_wx_range[i], LV_ALIGN_TOP_RIGHT, -150, y + 8);
+        lv_obj_t *rain = lv_obj_create(tab);
+        lv_obj_remove_style_all(rain);
+        lv_obj_set_size(rain, LV_SIZE_CONTENT, 36);
+        lv_obj_set_flex_flow(rain, LV_FLEX_FLOW_ROW);
+        lv_obj_set_flex_align(rain, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+        lv_obj_set_style_pad_column(rain, 6, 0);
+        lv_obj_set_style_base_dir(rain, LV_BASE_DIR_LTR, 0);
+        ui_label(rain, &font_wx_24, lv_color_hex(0x5AA9E6), SYM_DROPLET);
+        s_wx_rain[i] = ui_label(rain, &g_font22, COL_DIM, "");
+        ui_align(rain, LV_ALIGN_TOP_LEFT, 4, y + 4);
+    }
+}
+
+static void update_weather(void)
+{
+    uint32_t rev = weather_revision();
+    if (rev == s_wx_rev_seen) {
+        return;
+    }
+    s_wx_rev_seen = rev;
+    weather_t w;
+    weather_get(&w);
+    char status[96];
+    weather_status(status, sizeof(status));
+
+    lv_label_set_text_fmt(s_wx_city_lbl, "מיקום נוכחי: %s%s%s", w.place, status[0] ? "  ·  " : "", status);
+    if (!w.valid) {
+        lv_label_set_text(s_wx_hdr_icon, "");
+        lv_label_set_text(s_wx_hdr_temp, "");
+        lv_label_set_text_fmt(s_wx_place, "%s  ·  %s", w.place, status[0] ? status : "ממתין לנתונים…");
+        return;
+    }
+    const char *icon = weather_icon(w.code, w.is_day);
+    lv_label_set_text(s_wx_hdr_icon, icon);
+    lv_label_set_text_fmt(s_wx_hdr_temp, "%d°", (int)lroundf(w.temp));
+
+    struct tm up;
+    localtime_r(&w.updated, &up);
+    lv_label_set_text_fmt(s_wx_place, "%s  ·  עודכן %02d:%02d", w.place, up.tm_hour, up.tm_min);
+    lv_label_set_text(s_wx_icon, icon);
+    lv_label_set_text_fmt(s_wx_temp, "%d°", (int)lroundf(w.temp));
+    lv_label_set_text(s_wx_desc, weather_text(w.code));
+    lv_label_set_text_fmt(s_wx_extra, "לחות %d%%  ·  רוח %d קמ\"ש", w.humidity, (int)lroundf(w.wind_kmh));
+
+    for (int i = 0; i < WX_ROWS; i++) {
+        if (i >= w.ndays) {
+            lv_label_set_text(s_wx_day[i], "");
+            lv_label_set_text(s_wx_dicon[i], "");
+            lv_label_set_text(s_wx_range[i], "");
+            lv_label_set_text(s_wx_rain[i], "");
+            continue;
+        }
+        const weather_day_t *d = &w.days[i];
+        struct tm t = { .tm_year = d->year - 1900, .tm_mon = d->month - 1, .tm_mday = d->day, .tm_hour = 12, .tm_isdst = -1 };
+        mktime(&t);
+        lv_label_set_text(s_wx_day[i], i == 0 ? "היום" : i == 1 ? "מחר" : s_weekdays[t.tm_wday % 7]);
+        lv_label_set_text(s_wx_dicon[i], weather_icon(d->code, true));
+        lv_label_set_text_fmt(s_wx_range[i], "%d° / %d°", (int)lroundf(d->tmax), (int)lroundf(d->tmin));
+        if (d->rain_pct >= 0) {
+            lv_label_set_text_fmt(s_wx_rain[i], "%d%%", d->rain_pct);
+        } else {
+            lv_label_set_text(s_wx_rain[i], "");
+        }
+    }
 }
 
 static void build_lists(lv_obj_t *scr)
@@ -962,12 +1152,16 @@ static void build_lists(lv_obj_t *scr)
     lv_obj_set_style_text_font(bar, &g_font22, 0);
     lv_obj_t *tab_fav = lv_tabview_add_tab(s_tabview, SYM_STAR "  מועדפים");
     lv_obj_t *tab_all = lv_tabview_add_tab(s_tabview, LV_SYMBOL_LIST "  כל התחנות");
+    lv_obj_t *tab_wx = lv_tabview_add_tab(s_tabview, "מזג אוויר");
     lv_obj_remove_flag(lv_tabview_get_content(s_tabview), LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_add_event_cb(s_tabview, tab_changed_cb, LV_EVENT_VALUE_CHANGED, NULL);
+    build_weather_tab(tab_wx);
 
     build_list_tab(tab_fav, STATION_LIST_FAVORITES, "אין מועדפים עדיין.\nהפעילו תחנה והקישו " SYM_STAR " כדי להוסיף.");
     build_list_tab(tab_all, STATION_LIST_ALL, "אין תחנות עדיין.\nהתחברו לרשת WiFi והקישו רענון.");
 
     lv_obj_t *foot = lv_obj_create(left);
+    s_list_foot = foot;
     lv_obj_remove_style_all(foot);
     lv_obj_set_size(foot, lv_pct(100), 52);
     lv_obj_remove_flag(foot, LV_OBJ_FLAG_SCROLLABLE);

@@ -15,6 +15,11 @@ extern lv_font_t g_font22;
 extern lv_font_t g_font32;
 extern lv_font_t g_font48;
 LV_FONT_DECLARE(font_clock_120);   /* Alef Bold digits for the big clock */
+LV_FONT_DECLARE(font_wx_24);       /* FontAwesome weather icons (tools/gen_fonts_wx.sh) */
+LV_FONT_DECLARE(font_wx_32);
+LV_FONT_DECLARE(font_wx_64);
+#define SYM_DROPLET "\xEF\x81\x83"  /* F043 */
+#define SYM_WIND    "\xEF\x9C\xAE"  /* F72E */
 
 /* FontAwesome star: in the Noto fallback fonts, not in LVGL's symbol list */
 #define SYM_STAR   "\xEF\x80\x85"   /* U+F005 */

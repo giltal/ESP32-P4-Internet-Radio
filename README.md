@@ -13,6 +13,7 @@ Stations come from [radio-browser.info](https://www.radio-browser.info), filtere
 - 384 KB PSRAM ring buffer with pre-buffering, underrun recovery and automatic reconnect with back-off.
 - Hebrew right-to-left UI in the Alef font, with a large clock, the Hebrew weekday and the full date. Arabic and Russian station names render through Noto Sans fallback fonts (LVGL BiDi + Arabic shaping).
 - Song title and artist split from the stream's ICY "Artist - Title" metadata.
+- Weather from Open-Meteo (free, no key): current conditions in the header and a 5-day forecast tab; the city is searched by name in settings.
 - Clock kept by the on-board RX8025T RTC (stored as UTC; Israel time zone with automatic summer time), synced from the network or set by hand.
 - Settings screen (Hebrew): Wi-Fi scan with a Hebrew / English / digits keyboard, date & time setup with automatic network sync, and brightness.
 - Level meter, buffer meter, and codec / bitrate / sample-rate readout.
@@ -82,6 +83,7 @@ idf.py -D SDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.defaults.p4rev3" set-
 | `main/byte_ring.c` | Resettable PSRAM byte ring buffer |
 | `main/ui.c` | LVGL UI (Hebrew, RTL): clock/date header, station lists, now-playing card, settings overlay |
 | `main/ui_common.c` | Fonts with fallback chain, RTL helpers, Hebrew/English keyboard, toast |
+| `main/weather.c` | Open-Meteo forecast + geocoding city search, location on the SD card |
 | `main/clock.c` | RX8025T RTC + SNTP, Israel time zone, manual clock setting |
 | `main/fonts/` | Alef Hebrew fonts (22/32/48 px, 120 px clock digits) and Noto Sans fallbacks (Latin, Hebrew, Cyrillic, Arabic) + LVGL symbols |
 
@@ -104,6 +106,7 @@ npx lv_font_conv --bpp 4 --size 20 --no-compress --format lvgl --force-fast-kern
 ## Credits
 
 - Panel init sequences and timings: Guition reference drivers, via ESPHome's `mipi_dsi` models.
+- Weather data: Open-Meteo (open-meteo.com, CC BY 4.0). Weather icons: Font Awesome 5 Free (icons CC BY 4.0, font SIL OFL 1.1).
 - Fonts: Alef (SIL Open Font License, see `fonts_src/OFL.txt`), Noto Sans / Noto Sans Hebrew / Noto Sans Arabic (SIL Open Font License), FontAwesome 5 Free (SIL OFL / CC BY 4.0).
 - Hebrew UI layout, keyboard and RTC driver adapted from the ESP32_P4_FingerprintLoginSystem project.
 - Station data: radio-browser.info community database.

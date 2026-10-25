@@ -6,6 +6,7 @@ idf_component_register(
         "clock.c"
         "logo.c"
         "nowplaying.c"
+        "weather.c"
         "player.c"
         "sdcard.c"
         "station_db.c"
@@ -19,6 +20,9 @@ idf_component_register(
         "fonts/font_heb_32.c"
         "fonts/font_heb_48.c"
         "fonts/font_clock_120.c"
+        "fonts/font_wx_24.c"
+        "fonts/font_wx_32.c"
+        "fonts/font_wx_64.c"
     INCLUDE_DIRS "."
     REQUIRES
         nvs_flash esp_http_client esp-tls esp_netif esp_wifi esp_event esp_timer
