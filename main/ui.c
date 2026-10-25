@@ -71,6 +71,7 @@ static lv_obj_t *s_sw_ntp;
 #define WX_ROWS 5
 static lv_obj_t *s_list_foot;
 static lv_obj_t *s_wx_hdr_icon, *s_wx_hdr_temp;
+static lv_obj_t *s_wx_hdr_today, *s_wx_hdr_desc, *s_wx_hdr_range, *s_wx_hdr_rain;
 static lv_obj_t *s_wx_place, *s_wx_icon, *s_wx_temp, *s_wx_desc, *s_wx_extra;
 static lv_obj_t *s_wx_day[WX_ROWS], *s_wx_dicon[WX_ROWS], *s_wx_range[WX_ROWS], *s_wx_rain[WX_ROWS];
 static lv_obj_t *s_wx_city_ta, *s_wx_city_lbl;
@@ -1017,6 +1018,32 @@ static void build_header(lv_obj_t *scr)
     s_wx_hdr_icon = ui_label(wx, &font_wx_32, COL_ACCENT, "");
     s_wx_hdr_temp = ui_label(wx, &g_font32, COL_TEXT, "");
     ui_align(wx, LV_ALIGN_TOP_RIGHT, -160, 38);
+
+    /* today: description | high / low | rain chance, under the Wi-Fi + settings icons.
+     * Separate labels in an RTL row, so the numbers never get BiDi-reordered. */
+    s_wx_hdr_today = lv_obj_create(scr);
+    lv_obj_remove_style_all(s_wx_hdr_today);
+    lv_obj_set_size(s_wx_hdr_today, LV_SIZE_CONTENT, 34);
+    lv_obj_set_flex_flow(s_wx_hdr_today, LV_FLEX_FLOW_ROW);
+    lv_obj_set_flex_align(s_wx_hdr_today, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+    lv_obj_set_style_pad_column(s_wx_hdr_today, 14, 0);
+    lv_obj_set_style_base_dir(s_wx_hdr_today, LV_BASE_DIR_RTL, 0);
+    lv_obj_add_flag(s_wx_hdr_today, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_add_event_cb(s_wx_hdr_today, wx_hdr_cb, LV_EVENT_CLICKED, NULL);
+    s_wx_hdr_desc = ui_label(s_wx_hdr_today, &g_font22, COL_TEXT, "");
+    s_wx_hdr_range = ui_label(s_wx_hdr_today, &g_font22, COL_DIM, "");
+    lv_obj_set_style_base_dir(s_wx_hdr_range, LV_BASE_DIR_LTR, 0);
+    lv_obj_t *rain = lv_obj_create(s_wx_hdr_today);
+    lv_obj_remove_style_all(rain);
+    lv_obj_set_size(rain, LV_SIZE_CONTENT, LV_SIZE_CONTENT);
+    lv_obj_set_flex_flow(rain, LV_FLEX_FLOW_ROW);
+    lv_obj_set_flex_align(rain, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+    lv_obj_set_style_pad_column(rain, 4, 0);
+    lv_obj_set_style_base_dir(rain, LV_BASE_DIR_LTR, 0);
+    ui_label(rain, &font_wx_24, lv_color_hex(0x5AA9E6), SYM_DROPLET);
+    s_wx_hdr_rain = ui_label(rain, &g_font22, COL_DIM, "");
+    ui_align(s_wx_hdr_today, LV_ALIGN_TOP_RIGHT, -24, 100);
+    lv_obj_add_flag(s_wx_hdr_today, LV_OBJ_FLAG_HIDDEN);
 }
 
 static void tab_changed_cb(lv_event_t *e)
@@ -1098,12 +1125,22 @@ static void update_weather(void)
     if (!w.valid) {
         lv_label_set_text(s_wx_hdr_icon, "");
         lv_label_set_text(s_wx_hdr_temp, "");
+        lv_obj_add_flag(s_wx_hdr_today, LV_OBJ_FLAG_HIDDEN);
         lv_label_set_text_fmt(s_wx_place, "%s  ·  %s", w.place, status[0] ? status : "ממתין לנתונים…");
         return;
     }
     const char *icon = weather_icon(w.code, w.is_day);
     lv_label_set_text(s_wx_hdr_icon, icon);
     lv_label_set_text_fmt(s_wx_hdr_temp, "%d°", (int)lroundf(w.temp));
+    lv_label_set_text(s_wx_hdr_desc, weather_text(w.code));
+    lv_label_set_text_fmt(s_wx_hdr_range, "%d° / %d°", (int)lroundf(w.days[0].tmax), (int)lroundf(w.days[0].tmin));
+    if (w.days[0].rain_pct >= 0) {
+        lv_label_set_text_fmt(s_wx_hdr_rain, "%d%%", w.days[0].rain_pct);
+        lv_obj_remove_flag(lv_obj_get_parent(s_wx_hdr_rain), LV_OBJ_FLAG_HIDDEN);
+    } else {
+        lv_obj_add_flag(lv_obj_get_parent(s_wx_hdr_rain), LV_OBJ_FLAG_HIDDEN);
+    }
+    lv_obj_remove_flag(s_wx_hdr_today, LV_OBJ_FLAG_HIDDEN);
 
     struct tm up;
     localtime_r(&w.updated, &up);
