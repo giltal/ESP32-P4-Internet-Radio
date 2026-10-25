@@ -116,7 +116,8 @@ static cJSON *get_json(const char *url)
         .url = url,
         .timeout_ms = 10000,
         .crt_bundle_attach = esp_crt_bundle_attach,
-        .user_agent = "ESP32-P4-Internet-Radio/1.0",
+        /* Nominatim's usage policy asks for an identifying User-Agent */
+        .user_agent = "ESP32-P4-Internet-Radio/1.0 (github.com/giltal/ESP32-P4-Internet-Radio)",
         .event_handler = http_event,
         .user_data = &body,
     };
@@ -242,29 +243,101 @@ static void url_encode(const char *in, char *out, size_t cap)
     out[o] = 0;
 }
 
+/* City search result: 1 = found, 0 = no such place, -1 = service unreachable */
+typedef struct {
+    char name[64];
+    double lat, lon;
+} place_t;
+
+/* OpenStreetMap Nominatim: best coverage of (Israeli) towns; settlements only, so a query
+ * like "Even Yehuda" can't land on a street called "Ben Yehuda". Policy: identify the app,
+ * at most one request per second (a manual search from the settings is far below that). */
+static int search_nominatim(const char *enc, place_t *out)
+{
+    char url[360];
+    snprintf(url, sizeof(url), "https://nominatim.openstreetmap.org/search?q=%s"
+             "&format=jsonv2&limit=1&accept-language=he&featureType=settlement", enc);
+    cJSON *root = get_json(url);
+    if (!root) {
+        return -1;
+    }
+    const cJSON *r = cJSON_GetArrayItem(root, 0);
+    const cJSON *name = cJSON_GetObjectItem(r, "name");
+    const cJSON *lat = cJSON_GetObjectItem(r, "lat");
+    const cJSON *lon = cJSON_GetObjectItem(r, "lon");
+    int found = cJSON_IsString(name) && name->valuestring[0] && cJSON_IsString(lat) && cJSON_IsString(lon);
+    if (found) {
+        strlcpy(out->name, name->valuestring, sizeof(out->name));
+        out->lat = atof(lat->valuestring);
+        out->lon = atof(lon->valuestring);
+    }
+    cJSON_Delete(root);
+    return found;
+}
+
+/* Open-Meteo geocoding (GeoNames): fallback, some Hebrew names are missing there */
+static int search_open_meteo(const char *enc, const char *lang, place_t *out)
+{
+    char url[320];
+    snprintf(url, sizeof(url),
+             "https://geocoding-api.open-meteo.com/v1/search?name=%s&count=1&language=%s&format=json", enc, lang);
+    cJSON *root = get_json(url);
+    if (!root) {
+        return -1;
+    }
+    const cJSON *r = cJSON_GetArrayItem(cJSON_GetObjectItem(root, "results"), 0);
+    const cJSON *name = cJSON_GetObjectItem(r, "name");
+    int found = cJSON_IsString(name) && name->valuestring[0];
+    if (found) {
+        strlcpy(out->name, name->valuestring, sizeof(out->name));
+        out->lat = num(r, "latitude", 0);
+        out->lon = num(r, "longitude", 0);
+    }
+    cJSON_Delete(root);
+    return found;
+}
+
 static void do_search(const char *query)
 {
-    char enc[200], url[320];
-    url_encode(query, enc, sizeof(enc));
-    snprintf(url, sizeof(url),
-             "https://geocoding-api.open-meteo.com/v1/search?name=%s&count=1&language=he&format=json", enc);
+    /* the on-screen keyboard can leave stray spaces around the name */
+    char q[sizeof(s_query)];
+    while (*query == ' ') {
+        query++;
+    }
+    strlcpy(q, query, sizeof(q));
+    for (size_t n = strlen(q); n && q[n - 1] == ' '; n--) {
+        q[n - 1] = 0;
+    }
+    if (!q[0]) {
+        return;
+    }
+    char enc[200];
+    url_encode(q, enc, sizeof(enc));
     set_status("מחפש…");
-    cJSON *root = get_json(url);
-    const cJSON *r = root ? cJSON_GetArrayItem(cJSON_GetObjectItem(root, "results"), 0) : NULL;
-    const cJSON *name = cJSON_GetObjectItem(r, "name");
-    if (!r || !cJSON_IsString(name)) {
-        set_status(root ? "העיר לא נמצאה" : "אין חיבור לשירות מזג האוויר");
-        cJSON_Delete(root);
+
+    place_t p = { 0 };
+    int r = search_nominatim(enc, &p);
+    const char *src = "OpenStreetMap";
+    if (r != 1) {
+        int r2 = search_open_meteo(enc, "he", &p);
+        if (r2 != 1) {
+            r2 = search_open_meteo(enc, "en", &p);
+        }
+        src = "Open-Meteo";
+        r = (r2 == 1) ? 1 : (r == -1 && r2 == -1) ? -1 : 0;
+    }
+    if (r != 1) {
+        set_status(r == -1 ? "אין חיבור לשירות החיפוש" : "העיר לא נמצאה");
+        ESP_LOGW(TAG, "city search '%s': %s", q, r == -1 ? "unreachable" : "not found");
         return;
     }
     xSemaphoreTake(s_lock, portMAX_DELAY);
-    strlcpy(s_place, name->valuestring, sizeof(s_place));
-    s_lat = num(r, "latitude", s_lat);
-    s_lon = num(r, "longitude", s_lon);
+    strlcpy(s_place, p.name, sizeof(s_place));
+    s_lat = p.lat;
+    s_lon = p.lon;
     xSemaphoreGive(s_lock);
-    cJSON_Delete(root);
     save_location();
-    ESP_LOGI(TAG, "location: %s (%.4f, %.4f)", s_place, s_lat, s_lon);
+    ESP_LOGI(TAG, "location (%s): %s (%.4f, %.4f)", src, s_place, s_lat, s_lon);
     set_status("");
     fetch_forecast();
 }

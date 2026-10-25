@@ -1,6 +1,7 @@
 /*
  * Weather from Open-Meteo (free, no API key): current conditions + daily forecast for one
- * location. The location (name, lat, lon) is chosen by a city search (Open-Meteo geocoding)
+ * location. The location (name, lat, lon) is chosen by a city search (OpenStreetMap Nominatim,
+ * Open-Meteo geocoding as fallback)
  * and saved on the SD card; the default is Tel Aviv.
  */
 #pragma once
