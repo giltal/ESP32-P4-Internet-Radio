@@ -79,6 +79,20 @@ const char *weather_icon(int code, bool is_day)
     return FA_CLOUD;
 }
 
+uint32_t weather_icon_color(int code, bool is_day)
+{
+    if (code == 0) return is_day ? 0xFFB52E : 0xF2E6B8;                 /* warm sun / pale moon */
+    if (code == 1 || code == 2) return is_day ? 0xFFCF6B : 0xB8C4E0;    /* sun through clouds / moonlit */
+    if (code == 3) return 0xC9D1DC;                                     /* overcast grey */
+    if (code == 45 || code == 48) return 0x9AA4B1;                      /* fog */
+    if (code >= 51 && code <= 61) return 0x6CB4EE;                      /* drizzle, light rain */
+    if (code >= 63 && code <= 67) return 0x3D84F5;                      /* heavy rain */
+    if ((code >= 71 && code <= 77) || code == 85 || code == 86) return 0xBFE6FF;   /* icy snow */
+    if (code >= 80 && code <= 82) return is_day ? 0x5FC6D8 : 0x6CB4EE;  /* sunny showers */
+    if (code >= 95) return 0xFFE14D;                                    /* lightning */
+    return 0xC9D1DC;
+}
+
 /* ------------------------------------------------------------------ */
 
 static void set_status(const char *s)

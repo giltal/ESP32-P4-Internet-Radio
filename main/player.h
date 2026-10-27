@@ -34,12 +34,21 @@ typedef struct {
     uint16_t bitrate_kbps;
     uint8_t buffer_pct;     /* ring buffer fill */
     uint8_t level;          /* output peak 0..100, for a level meter */
+    bool paused;
+    uint32_t behind_s;      /* how far playback trails the live broadcast (pause buffer) */
     uint32_t revision;      /* changes whenever title/station/state changes */
 } player_status_t;
 
 esp_err_t player_init(void);
 void player_play(const station_t *st);
 void player_stop(void);
+
+/*
+ * Pause keeps receiving the stream into the PSRAM buffer, so resuming continues where it
+ * stopped (behind live). A full buffer drops its oldest audio. player_go_live() jumps back.
+ */
+void player_pause(bool pause);
+void player_go_live(void);
 
 /** Song title from the station's website ("Artist - Title"); ignored if the stream sends its own. */
 void player_set_web_title(const char *station_url, const char *title);

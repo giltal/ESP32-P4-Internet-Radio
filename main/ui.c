@@ -21,6 +21,7 @@
 static const char *TAG = "ui";
 
 #define YEAR_MIN 2024
+#define BEHIND_MIN_S 5     /* below this the pause buffer counts as live */
 
 static const char *const s_weekdays[] = { "ראשון", "שני", "שלישי", "רביעי", "חמישי", "שישי", "שבת" };
 static const char *const s_months[] = {
@@ -33,7 +34,6 @@ static lv_obj_t *s_clock;
 static lv_obj_t *s_weekday_lbl;
 static lv_obj_t *s_date_lbl;
 static lv_obj_t *s_wifi_icon;
-static lv_obj_t *s_tabview;
 static lv_obj_t *s_list[2];          /* [STATION_LIST_ALL], [STATION_LIST_FAVORITES] */
 static lv_obj_t *s_empty_lbl[2];
 static lv_obj_t *s_db_status;
@@ -53,6 +53,8 @@ static lv_obj_t *s_format_lbl;
 static lv_obj_t *s_level_bar;
 static lv_obj_t *s_buffer_bar;
 static lv_obj_t *s_play_icon;
+static lv_obj_t *s_pause_btn, *s_pause_icon;
+static lv_obj_t *s_live_btn, *s_live_lbl;
 static lv_obj_t *s_fav_btn;
 static lv_obj_t *s_vol_slider;
 static lv_obj_t *s_vol_lbl;
@@ -70,9 +72,26 @@ static lv_obj_t *s_sw_ntp;
 /* weather */
 #define WX_ROWS 5
 static lv_obj_t *s_list_foot;
+
+/* Left card sections, picked with round icons (right to left). To add one: an enum value,
+ * a row here and a build_*() call in build_lists(). */
+enum { SEC_FAVORITES, SEC_STATIONS, SEC_WEATHER, SEC_COUNT };
+typedef struct {
+    const char *icon;
+    const lv_font_t *font;
+    const char *title;
+    bool list_footer;          /* show the station-directory status + refresh row */
+    lv_obj_t *btn, *panel;
+} section_t;
+static section_t s_sections[SEC_COUNT] = {
+    [SEC_FAVORITES] = { SYM_STAR, &g_font32, "מועדפים", true },
+    [SEC_STATIONS] = { LV_SYMBOL_LIST, &g_font32, "תחנות רדיו", true },
+    [SEC_WEATHER] = { SYM_CLOUD_SUN, &font_wx_32, "מזג אוויר", false },
+};
+static lv_obj_t *s_section_title;
 static lv_obj_t *s_wx_hdr_icon, *s_wx_hdr_temp;
 static lv_obj_t *s_wx_hdr_today, *s_wx_hdr_desc, *s_wx_hdr_range, *s_wx_hdr_rain;
-static lv_obj_t *s_wx_place, *s_wx_icon, *s_wx_temp, *s_wx_desc, *s_wx_extra;
+static lv_obj_t *s_wx_place, *s_wx_updated, *s_wx_icon, *s_wx_temp, *s_wx_desc, *s_wx_extra;
 static lv_obj_t *s_wx_day[WX_ROWS], *s_wx_dicon[WX_ROWS], *s_wx_range[WX_ROWS], *s_wx_rain[WX_ROWS];
 static lv_obj_t *s_wx_city_ta, *s_wx_city_lbl;
 static uint32_t s_wx_rev_seen = UINT32_MAX;
@@ -374,33 +393,20 @@ static void play_btn_cb(lv_event_t *e)
     }
 }
 
-static void step_station(int dir)
+static void pause_btn_cb(lv_event_t *e)
 {
-    station_list_t list = s_current_list;
-    size_t n = station_db_count(list);
-    if (n == 0) {
-        list = STATION_LIST_ALL;
-        n = station_db_count(list);
-        if (n == 0) {
-            return;
-        }
-    }
-    int idx = s_current_index < 0 ? 0 : (int)((s_current_index + dir + (int)n) % (int)n);
-    start_station(list, idx);
-    lv_obj_t *btn = lv_obj_get_child(s_list[list], idx);
-    if (btn) {
-        lv_obj_scroll_to_view(btn, LV_ANIM_ON);
+    player_status_t st;
+    player_get_status(&st);
+    if (st.paused) {
+        player_pause(false);
+    } else if (st.state == PLAYER_PLAYING) {
+        player_pause(true);
     }
 }
 
-static void prev_btn_cb(lv_event_t *e)
+static void live_btn_cb(lv_event_t *e)
 {
-    step_station(-1);
-}
-
-static void next_btn_cb(lv_event_t *e)
-{
-    step_station(1);
+    player_go_live();
 }
 
 static void fav_btn_cb(lv_event_t *e)
@@ -433,6 +439,14 @@ static const char *state_text(const player_status_t *st, lv_color_t *color)
         *color = COL_ACCENT;
         return "טוען…";
     case PLAYER_PLAYING:
+        if (st->paused) {
+            *color = COL_ACCENT;
+            return "מושהה";
+        }
+        if (st->behind_s >= BEHIND_MIN_S) {
+            *color = COL_ACCENT;
+            return "מנגן באיחור";
+        }
         *color = COL_OK;
         return "שידור חי";
     case PLAYER_ERROR:
@@ -469,6 +483,49 @@ static void show_song(const char *title)
     }
 }
 
+/* Pause button + "LIVE" pill (shows how far behind live when playing from the buffer) */
+static bool is_behind(const player_status_t *st)
+{
+    return st->paused || st->behind_s >= BEHIND_MIN_S;
+}
+
+static void update_transport(const player_status_t *st)
+{
+    static int shown = -2;      /* -1 = live, -2 = idle, else seconds behind */
+    static int shown_paused = -1;
+    bool active = st->state == PLAYER_BUFFERING || st->state == PLAYER_PLAYING;
+
+    if (shown_paused != (int)st->paused) {
+        shown_paused = st->paused;
+        lv_obj_set_style_bg_color(s_pause_btn, st->paused ? COL_ACCENT : COL_CARD2, 0);
+        lv_obj_set_style_text_color(s_pause_icon, st->paused ? lv_color_hex(0x1A1200) : COL_TEXT, 0);
+        lv_label_set_text(s_pause_icon, st->paused ? LV_SYMBOL_PLAY : LV_SYMBOL_PAUSE);
+    }
+
+    int want = !active ? -2 : is_behind(st) ? (int)st->behind_s : -1;
+    if (want == shown) {
+        return;
+    }
+    shown = want;
+    if (want == -2) {
+        lv_obj_set_style_bg_color(s_live_btn, COL_CARD2, 0);
+        lv_obj_set_style_text_color(s_live_lbl, COL_DIM, 0);
+        lv_label_set_text(s_live_lbl, "LIVE");
+    } else if (want == -1) {
+        lv_obj_set_style_bg_color(s_live_btn, lv_color_hex(0xD93636), 0);
+        lv_obj_set_style_text_color(s_live_lbl, lv_color_white(), 0);
+        lv_label_set_text(s_live_lbl, "LIVE");
+    } else {
+        lv_obj_set_style_bg_color(s_live_btn, COL_CARD2, 0);
+        lv_obj_set_style_text_color(s_live_lbl, COL_ACCENT, 0);
+        if (want >= 3600) {
+            lv_label_set_text_fmt(s_live_lbl, "-%d:%02d:%02d", want / 3600, want / 60 % 60, want % 60);
+        } else {
+            lv_label_set_text_fmt(s_live_lbl, "-%d:%02d", want / 60, want % 60);
+        }
+    }
+}
+
 static void update_player(void)
 {
     player_status_t st;
@@ -476,11 +533,14 @@ static void update_player(void)
 
     lv_bar_set_value(s_buffer_bar, st.buffer_pct, LV_ANIM_OFF);
     lv_bar_set_value(s_level_bar, st.state == PLAYER_PLAYING ? st.level : 0, LV_ANIM_ON);
+    update_transport(&st);
 
-    if (st.revision == s_player_rev_seen) {
+    static bool behind_seen;
+    if (st.revision == s_player_rev_seen && is_behind(&st) == behind_seen) {
         return;
     }
     s_player_rev_seen = st.revision;
+    behind_seen = is_behind(&st);
 
     lv_color_t c;
     lv_label_set_text(s_state_lbl, state_text(&st, &c));
@@ -979,10 +1039,11 @@ static void tick_cb(lv_timer_t *t)
 
 /* ------------------------------------------------------------------ */
 
+static void show_section(int idx);
+
 static void wx_hdr_cb(lv_event_t *e)
 {
-    lv_tabview_set_active(s_tabview, 2, LV_ANIM_ON);
-    lv_obj_add_flag(s_list_foot, LV_OBJ_FLAG_HIDDEN);
+    show_section(SEC_WEATHER);
 }
 
 static void build_header(lv_obj_t *scr)
@@ -1046,25 +1107,25 @@ static void build_header(lv_obj_t *scr)
     lv_obj_add_flag(s_wx_hdr_today, LV_OBJ_FLAG_HIDDEN);
 }
 
-static void tab_changed_cb(lv_event_t *e)
-{
-    if (lv_tabview_get_tab_active(s_tabview) == 2) {
-        lv_obj_add_flag(s_list_foot, LV_OBJ_FLAG_HIDDEN);
-    } else {
-        lv_obj_remove_flag(s_list_foot, LV_OBJ_FLAG_HIDDEN);
-    }
-}
-
 static void build_weather_tab(lv_obj_t *tab)
 {
     lv_obj_set_style_pad_all(tab, 8, 0);
     lv_obj_remove_flag(tab, LV_OBJ_FLAG_SCROLLABLE);
 
-    s_wx_place = ui_label(tab, &g_font22, COL_DIM, "");
-    lv_obj_set_width(s_wx_place, lv_pct(100));
-    lv_obj_set_style_text_align(s_wx_place, LV_TEXT_ALIGN_RIGHT, 0);
+    /* place + "updated" (RTL) and the time in its own LTR label, so BiDi never swaps hh:mm */
+    lv_obj_t *top = lv_obj_create(tab);
+    lv_obj_remove_style_all(top);
+    lv_obj_set_size(top, lv_pct(100), 30);
+    lv_obj_set_flex_flow(top, LV_FLEX_FLOW_ROW);
+    lv_obj_set_flex_align(top, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+    lv_obj_set_style_pad_column(top, 6, 0);
+    lv_obj_set_style_base_dir(top, LV_BASE_DIR_RTL, 0);
+    ui_align(top, LV_ALIGN_TOP_RIGHT, 0, 0);
+    s_wx_place = ui_label(top, &g_font22, COL_DIM, "");
+    lv_obj_set_style_max_width(s_wx_place, 300, 0);
     lv_label_set_long_mode(s_wx_place, LV_LABEL_LONG_MODE_DOTS);
-    ui_align(s_wx_place, LV_ALIGN_TOP_RIGHT, 0, 0);
+    s_wx_updated = ui_label(top, &g_font22, COL_DIM, "");
+    lv_obj_set_style_base_dir(s_wx_updated, LV_BASE_DIR_LTR, 0);
 
     /* now: icon + temperature on the right, description + humidity / wind on the left */
     s_wx_icon = ui_label(tab, &font_wx_64, COL_ACCENT, "");
@@ -1127,10 +1188,13 @@ static void update_weather(void)
         lv_label_set_text(s_wx_hdr_temp, "");
         lv_obj_add_flag(s_wx_hdr_today, LV_OBJ_FLAG_HIDDEN);
         lv_label_set_text_fmt(s_wx_place, "%s  ·  %s", w.place, status[0] ? status : "ממתין לנתונים…");
+        lv_label_set_text(s_wx_updated, "");
         return;
     }
     const char *icon = weather_icon(w.code, w.is_day);
+    lv_color_t icon_color = lv_color_hex(weather_icon_color(w.code, w.is_day));
     lv_label_set_text(s_wx_hdr_icon, icon);
+    lv_obj_set_style_text_color(s_wx_hdr_icon, icon_color, 0);
     lv_label_set_text_fmt(s_wx_hdr_temp, "%d°", (int)lroundf(w.temp));
     lv_label_set_text(s_wx_hdr_desc, weather_text(w.code));
     lv_label_set_text_fmt(s_wx_hdr_range, "%d° / %d°", (int)lroundf(w.days[0].tmax), (int)lroundf(w.days[0].tmin));
@@ -1144,8 +1208,10 @@ static void update_weather(void)
 
     struct tm up;
     localtime_r(&w.updated, &up);
-    lv_label_set_text_fmt(s_wx_place, "%s  ·  עודכן %02d:%02d", w.place, up.tm_hour, up.tm_min);
+    lv_label_set_text_fmt(s_wx_place, "%s  ·  עודכן", w.place);
+    lv_label_set_text_fmt(s_wx_updated, "%02d:%02d", up.tm_hour, up.tm_min);
     lv_label_set_text(s_wx_icon, icon);
+    lv_obj_set_style_text_color(s_wx_icon, icon_color, 0);
     lv_label_set_text_fmt(s_wx_temp, "%d°", (int)lroundf(w.temp));
     lv_label_set_text(s_wx_desc, weather_text(w.code));
     lv_label_set_text_fmt(s_wx_extra, "לחות %d%%  ·  רוח %d קמ\"ש", w.humidity, (int)lroundf(w.wind_kmh));
@@ -1163,6 +1229,7 @@ static void update_weather(void)
         mktime(&t);
         lv_label_set_text(s_wx_day[i], i == 0 ? "היום" : i == 1 ? "מחר" : s_weekdays[t.tm_wday % 7]);
         lv_label_set_text(s_wx_dicon[i], weather_icon(d->code, true));
+        lv_obj_set_style_text_color(s_wx_dicon[i], lv_color_hex(weather_icon_color(d->code, true)), 0);
         lv_label_set_text_fmt(s_wx_range[i], "%d° / %d°", (int)lroundf(d->tmax), (int)lroundf(d->tmin));
         if (d->rain_pct >= 0) {
             lv_label_set_text_fmt(s_wx_rain[i], "%d%%", d->rain_pct);
@@ -1172,30 +1239,85 @@ static void update_weather(void)
     }
 }
 
+static void section_btn_cb(lv_event_t *e)
+{
+    show_section((int)(intptr_t)lv_event_get_user_data(e));
+}
+
+static lv_obj_t *section_panel(lv_obj_t *body)
+{
+    lv_obj_t *p = lv_obj_create(body);
+    lv_obj_remove_style_all(p);
+    lv_obj_set_size(p, lv_pct(100), lv_pct(100));
+    lv_obj_remove_flag(p, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_add_flag(p, LV_OBJ_FLAG_HIDDEN);
+    return p;
+}
+
+static void show_section(int idx)
+{
+    for (int i = 0; i < SEC_COUNT; i++) {
+        bool on = i == idx;
+        /* inactive circles get a lighter fill and a ring so they stand out from the card */
+        lv_obj_set_style_bg_color(s_sections[i].btn, on ? COL_ACCENT : lv_color_hex(0x353C49), 0);
+        lv_obj_set_style_border_width(s_sections[i].btn, 2, 0);
+        lv_obj_set_style_border_color(s_sections[i].btn, on ? COL_ACCENT : lv_color_hex(0x6B7586), 0);
+        lv_obj_set_style_text_color(s_sections[i].btn, on ? COL_BG : COL_TEXT, 0);
+        if (on) {
+            lv_obj_remove_flag(s_sections[i].panel, LV_OBJ_FLAG_HIDDEN);
+        } else {
+            lv_obj_add_flag(s_sections[i].panel, LV_OBJ_FLAG_HIDDEN);
+        }
+    }
+    lv_label_set_text(s_section_title, s_sections[idx].title);
+    if (s_sections[idx].list_footer) {
+        lv_obj_remove_flag(s_list_foot, LV_OBJ_FLAG_HIDDEN);
+    } else {
+        lv_obj_add_flag(s_list_foot, LV_OBJ_FLAG_HIDDEN);
+    }
+}
+
 static void build_lists(lv_obj_t *scr)
 {
     lv_obj_t *left = make_card(scr, 420, 436);
     ui_align(left, LV_ALIGN_TOP_LEFT, 16, 148);
     lv_obj_set_style_pad_all(left, 8, 0);
+    lv_obj_set_style_pad_row(left, 8, 0);
     lv_obj_set_flex_flow(left, LV_FLEX_FLOW_COLUMN);
 
-    s_tabview = lv_tabview_create(left);
-    lv_tabview_set_tab_bar_size(s_tabview, 52);
-    lv_obj_set_width(s_tabview, lv_pct(100));
-    lv_obj_set_flex_grow(s_tabview, 1);
-    lv_obj_set_style_bg_opa(s_tabview, LV_OPA_TRANSP, 0);
-    lv_obj_t *bar = lv_tabview_get_tab_bar(s_tabview);
-    lv_obj_set_style_bg_color(bar, COL_CARD, 0);
-    lv_obj_set_style_text_font(bar, &g_font22, 0);
-    lv_obj_t *tab_fav = lv_tabview_add_tab(s_tabview, SYM_STAR "  מועדפים");
-    lv_obj_t *tab_all = lv_tabview_add_tab(s_tabview, LV_SYMBOL_LIST "  כל התחנות");
-    lv_obj_t *tab_wx = lv_tabview_add_tab(s_tabview, "מזג אוויר");
-    lv_obj_remove_flag(lv_tabview_get_content(s_tabview), LV_OBJ_FLAG_SCROLLABLE);
-    lv_obj_add_event_cb(s_tabview, tab_changed_cb, LV_EVENT_VALUE_CHANGED, NULL);
-    build_weather_tab(tab_wx);
+    /* section icons from the right, the active section's name at the far left */
+    lv_obj_t *nav = lv_obj_create(left);
+    lv_obj_remove_style_all(nav);
+    lv_obj_set_size(nav, lv_pct(100), 60);
+    lv_obj_remove_flag(nav, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_flex_flow(nav, LV_FLEX_FLOW_ROW);
+    lv_obj_set_flex_align(nav, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+    lv_obj_set_style_pad_column(nav, 12, 0);
+    lv_obj_set_style_pad_hor(nav, 4, 0);
+    lv_obj_set_style_base_dir(nav, LV_BASE_DIR_RTL, 0);
 
-    build_list_tab(tab_fav, STATION_LIST_FAVORITES, "אין מועדפים עדיין.\nהפעילו תחנה והקישו " SYM_STAR " כדי להוסיף.");
-    build_list_tab(tab_all, STATION_LIST_ALL, "אין תחנות עדיין.\nהתחברו לרשת WiFi והקישו רענון.");
+    lv_obj_t *body = lv_obj_create(left);
+    lv_obj_remove_style_all(body);
+    lv_obj_set_width(body, lv_pct(100));
+    lv_obj_set_flex_grow(body, 1);
+    lv_obj_remove_flag(body, LV_OBJ_FLAG_SCROLLABLE);
+
+    for (int i = 0; i < SEC_COUNT; i++) {
+        section_t *sec = &s_sections[i];
+        sec->btn = make_icon_button(nav, sec->icon, 56, sec->font);
+        /* the icon takes its color from the button (see show_section) */
+        lv_obj_remove_local_style_prop(lv_obj_get_child(sec->btn, 0), LV_STYLE_TEXT_COLOR, 0);
+        lv_obj_add_event_cb(sec->btn, section_btn_cb, LV_EVENT_CLICKED, (void *)(intptr_t)i);
+        sec->panel = section_panel(body);
+    }
+    s_section_title = ui_label(nav, &g_font32, COL_TEXT, "");
+    lv_obj_set_flex_grow(s_section_title, 1);
+    lv_obj_set_style_text_align(s_section_title, LV_TEXT_ALIGN_LEFT, 0);
+    lv_label_set_long_mode(s_section_title, LV_LABEL_LONG_MODE_DOTS);
+
+    build_list_tab(s_sections[SEC_FAVORITES].panel, STATION_LIST_FAVORITES, "אין מועדפים עדיין.\nהפעילו תחנה והקישו " SYM_STAR " כדי להוסיף.");
+    build_list_tab(s_sections[SEC_STATIONS].panel, STATION_LIST_ALL, "אין תחנות עדיין.\nהתחברו לרשת WiFi והקישו רענון.");
+    build_weather_tab(s_sections[SEC_WEATHER].panel);
 
     lv_obj_t *foot = lv_obj_create(left);
     s_list_foot = foot;
@@ -1285,7 +1407,7 @@ static void build_now_playing(lv_obj_t *scr)
     lv_obj_set_style_bg_color(s_buffer_bar, COL_CARD2, 0);
     lv_obj_set_style_bg_color(s_buffer_bar, COL_DIM, LV_PART_INDICATOR);
 
-    /* transport controls: media symbols keep their usual left-to-right order */
+    /* transport, left to right: play/stop, pause, LIVE, favorite */
     lv_obj_t *ctl = lv_obj_create(np);
     lv_obj_remove_style_all(ctl);
     lv_obj_set_size(ctl, lv_pct(100), 96);
@@ -1294,10 +1416,7 @@ static void build_now_playing(lv_obj_t *scr)
     lv_obj_set_style_base_dir(ctl, LV_BASE_DIR_LTR, 0);
     lv_obj_set_flex_flow(ctl, LV_FLEX_FLOW_ROW);
     lv_obj_set_flex_align(ctl, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
-    lv_obj_set_style_pad_column(ctl, 28, 0);
-
-    lv_obj_t *prev = make_icon_button(ctl, LV_SYMBOL_PREV, 72, &g_font32);
-    lv_obj_add_event_cb(prev, prev_btn_cb, LV_EVENT_CLICKED, NULL);
+    lv_obj_set_style_pad_column(ctl, 24, 0);
 
     lv_obj_t *play = make_icon_button(ctl, LV_SYMBOL_PLAY, 96, &g_font48);
     lv_obj_set_style_bg_color(play, COL_ACCENT, 0);
@@ -1305,8 +1424,17 @@ static void build_now_playing(lv_obj_t *scr)
     lv_obj_set_style_text_color(s_play_icon, lv_color_hex(0x1A1200), 0);
     lv_obj_add_event_cb(play, play_btn_cb, LV_EVENT_CLICKED, NULL);
 
-    lv_obj_t *next = make_icon_button(ctl, LV_SYMBOL_NEXT, 72, &g_font32);
-    lv_obj_add_event_cb(next, next_btn_cb, LV_EVENT_CLICKED, NULL);
+    /* pause into the PSRAM buffer, then jump back to the live broadcast */
+    s_pause_btn = make_icon_button(ctl, LV_SYMBOL_PAUSE, 72, &g_font32);
+    s_pause_icon = lv_obj_get_child(s_pause_btn, 0);
+    lv_obj_add_event_cb(s_pause_btn, pause_btn_cb, LV_EVENT_CLICKED, NULL);
+
+    s_live_btn = make_text_button(ctl, "LIVE", COL_CARD2, COL_DIM, 128, 72);
+    lv_obj_set_style_radius(s_live_btn, LV_RADIUS_CIRCLE, 0);
+    s_live_lbl = lv_obj_get_child(s_live_btn, 0);
+    lv_obj_set_style_text_font(s_live_lbl, &g_font32, 0);
+    lv_obj_set_style_base_dir(s_live_lbl, LV_BASE_DIR_LTR, 0);
+    lv_obj_add_event_cb(s_live_btn, live_btn_cb, LV_EVENT_CLICKED, NULL);
 
     s_fav_btn = make_icon_button(ctl, SYM_STAR, 72, &g_font32);
     lv_obj_add_event_cb(s_fav_btn, fav_btn_cb, LV_EVENT_CLICKED, NULL);
@@ -1376,7 +1504,7 @@ void ui_load_settings(void)
     update_now_playing_header();
 
     /* Start on favorites if there are any */
-    lv_tabview_set_active(s_tabview, station_db_count(STATION_LIST_FAVORITES) ? 0 : 1, LV_ANIM_OFF);
+    show_section(station_db_count(STATION_LIST_FAVORITES) ? SEC_FAVORITES : SEC_STATIONS);
 }
 
 /* Called from main once Wi-Fi is up: resume the last station. */

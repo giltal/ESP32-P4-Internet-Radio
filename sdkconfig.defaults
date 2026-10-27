@@ -28,12 +28,17 @@ CONFIG_ESP_HOSTED_SDIO_HOST_INTERFACE=y
 # Same SDIO wiring as Espressif's P4 Function EV board:
 # CLK 18, CMD 19, D0-D3 14-17, C6 reset 54
 CONFIG_ESP_HOSTED_P4_DEV_BOARD_FUNC_BOARD=y
+# esp_hosted allocates its SDIO buffer pools in internal RAM before the scheduler starts;
+# 20+20 buffers (~88 KB) left FreeRTOS too little to boot once TLS 1.3 was enabled
+CONFIG_ESP_HOSTED_SDIO_TX_Q_SIZE=12
+CONFIG_ESP_HOSTED_SDIO_RX_Q_SIZE=12
 
 # ---- Networking / TLS --------------------------------------------------------
 CONFIG_LWIP_TCP_WND_DEFAULT=32768
 CONFIG_LWIP_TCP_RECVMBOX_SIZE=32
 CONFIG_MBEDTLS_EXTERNAL_MEM_ALLOC=y
-CONFIG_MBEDTLS_DYNAMIC_BUFFER=y
+# TLS 1.3 (needs static TLS buffers; with EXTERNAL_MEM_ALLOC they live in PSRAM)
+CONFIG_MBEDTLS_SSL_PROTO_TLS1_3=y
 CONFIG_MBEDTLS_CERTIFICATE_BUNDLE=y
 CONFIG_MBEDTLS_CERTIFICATE_BUNDLE_DEFAULT_FULL=y
 CONFIG_ESP_HTTP_CLIENT_ENABLE_HTTPS=y

@@ -56,6 +56,8 @@ void weather_status(char *buf, size_t len);
 /** Hebrew description and FontAwesome icon (UTF-8) for a WMO weather code. */
 const char *weather_text(int code);
 const char *weather_icon(int code, bool is_day);
+/* RGB color that suits that icon (sun yellow, rain blue, ...) */
+uint32_t weather_icon_color(int code, bool is_day);
 
 #ifdef __cplusplus
 }

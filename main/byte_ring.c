@@ -14,6 +14,7 @@ struct byte_ring {
     size_t head;   /* write position */
     size_t tail;   /* read position */
     size_t fill;
+    uint64_t total_in, total_out;
     SemaphoreHandle_t lock;
     EventGroupHandle_t ev;
 };
@@ -53,6 +54,7 @@ size_t byte_ring_write(byte_ring_t *r, const uint8_t *data, size_t len, TickType
             memcpy(r->buf, data + done + first, n - first);
             r->head = (r->head + n) % r->size;
             r->fill += n;
+            r->total_in += n;
             done += n;
         } else {
             xEventGroupClearBits(r->ev, EV_SPACE);   /* full: wait for the reader */
@@ -83,6 +85,7 @@ size_t byte_ring_read(byte_ring_t *r, uint8_t *data, size_t len, TickType_t time
             memcpy(data + first, r->buf, n - first);
             r->tail = (r->tail + n) % r->size;
             r->fill -= n;
+            r->total_out += n;
         } else {
             xEventGroupClearBits(r->ev, EV_DATA);    /* empty: wait for the writer */
         }
@@ -116,7 +119,30 @@ void byte_ring_reset(byte_ring_t *r)
 {
     xSemaphoreTake(r->lock, portMAX_DELAY);
     r->head = r->tail = r->fill = 0;
+    r->total_out = r->total_in;
     xEventGroupClearBits(r->ev, EV_DATA);
     xSemaphoreGive(r->lock);
     xEventGroupSetBits(r->ev, EV_SPACE);
+}
+
+size_t byte_ring_drop(byte_ring_t *r, size_t len)
+{
+    xSemaphoreTake(r->lock, portMAX_DELAY);
+    size_t n = len < r->fill ? len : r->fill;
+    r->tail = (r->tail + n) % r->size;
+    r->fill -= n;
+    r->total_out += n;
+    xSemaphoreGive(r->lock);
+    if (n) {
+        xEventGroupSetBits(r->ev, EV_SPACE);
+    }
+    return n;
+}
+
+void byte_ring_totals(byte_ring_t *r, uint64_t *in, uint64_t *out)
+{
+    xSemaphoreTake(r->lock, portMAX_DELAY);
+    *in = r->total_in;
+    *out = r->total_out;
+    xSemaphoreGive(r->lock);
 }

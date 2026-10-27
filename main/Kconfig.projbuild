@@ -66,9 +66,9 @@ menu "Internet Radio (JC1060P470C)"
             default 20
 
         config RADIO_STREAM_BUFFER_KB
-            int "Stream buffer size in PSRAM (KB)"
-            range 64 2048
-            default 384
+            int "Stream / pause buffer size in PSRAM (KB)"
+            range 64 32768
+            default 16384
 
         config RADIO_PREBUFFER_KB
             int "Data to buffer before playback starts (KB)"

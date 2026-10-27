@@ -54,6 +54,17 @@ static volatile esp_audio_simple_dec_type_t s_dec_type;
 static TaskHandle_t s_reader;
 static int s_volume = 60;
 static volatile bool s_icy_has_title;      /* the stream sends its own (non-empty) titles */
+static volatile bool s_paused;
+static volatile bool s_go_live;             /* decoder: drop the backlog, resync */
+
+/* Titles arrive in real time but the audio may be played minutes later (pause buffer):
+ * each title waits until playback reaches the stream position it arrived at. */
+#define TITLE_QUEUE 16
+static struct {
+    uint64_t at;            /* ring total_in when the title arrived */
+    char title[sizeof(((player_status_t *)0)->title)];
+} s_titles[TITLE_QUEUE];
+static int s_title_count;
 
 /* ------------------------------------------------------------------ */
 /* Status helpers                                                      */
@@ -75,12 +86,38 @@ static void status_set_state(uint32_t sess, player_state_t state, const char *er
 
 static void status_set_title(uint32_t sess, const char *title)
 {
+    uint64_t in, out;
+    byte_ring_totals(s_ring, &in, &out);
     xSemaphoreTake(s_lock, portMAX_DELAY);
-    if (sess == s_session && strcmp(s_st.title, title) != 0) {
-        strlcpy(s_st.title, title, sizeof(s_st.title));
-        s_st.revision++;
+    const char *last = s_title_count ? s_titles[s_title_count - 1].title : s_st.title;
+    if (sess == s_session && strcmp(last, title) != 0) {
+        if (s_title_count == TITLE_QUEUE) {     /* a very long pause: forget the oldest */
+            memmove(&s_titles[0], &s_titles[1], sizeof(s_titles[0]) * (TITLE_QUEUE - 1));
+            s_title_count--;
+        }
+        s_titles[s_title_count].at = in;
+        strlcpy(s_titles[s_title_count].title, title, sizeof(s_titles[0].title));
+        s_title_count++;
     }
     xSemaphoreGive(s_lock);
+}
+
+/* Show the newest queued title whose audio is now playing. Call with s_lock held. */
+static void titles_apply_locked(uint64_t played)
+{
+    int due = 0;
+    while (due < s_title_count && s_titles[due].at <= played) {
+        due++;
+    }
+    if (due == 0) {
+        return;
+    }
+    if (strcmp(s_st.title, s_titles[due - 1].title) != 0) {
+        strlcpy(s_st.title, s_titles[due - 1].title, sizeof(s_st.title));
+        s_st.revision++;
+    }
+    memmove(&s_titles[0], &s_titles[due], sizeof(s_titles[0]) * (s_title_count - due));
+    s_title_count -= due;
 }
 
 static void status_set_format(uint32_t sess, const char *codec, int kbps, uint32_t rate, int ch)
@@ -388,6 +425,13 @@ static bool push_audio(uint32_t sess, const uint8_t *p, size_t n)
         if (sess != s_session) {
             return false;
         }
+        if (s_paused) {
+            /* pause buffer full: it becomes a FIFO, the oldest audio makes room */
+            size_t space = byte_ring_size(s_ring) - byte_ring_filled(s_ring);
+            if (space < n) {
+                byte_ring_drop(s_ring, n - space);
+            }
+        }
         size_t w = byte_ring_write(s_ring, p, n, pdMS_TO_TICKS(100));
         p += w;
         n -= w;
@@ -682,7 +726,32 @@ static void decode_session(uint32_t sess)
     int errors = 0;
     int empty_reads = 0;
     bool rebuffering = false;
+    bool was_paused = false;
     while (sess == s_session) {
+        if (s_go_live) {
+            /* keep just a prebuffer's worth of the newest audio; the cut lands mid-frame */
+            s_go_live = false;
+            size_t fill = byte_ring_filled(s_ring);
+            if (fill > PREBUFFER_BYTES) {
+                byte_ring_drop(s_ring, fill - PREBUFFER_BYTES);
+            }
+            esp_audio_simple_dec_reset(dec);
+        }
+        if (s_paused) {
+            if (!was_paused) {
+                was_paused = true;
+                board_audio_close();    /* amp off: no hiss or stale DMA loop while paused */
+                s_st.level = 0;
+            }
+            vTaskDelay(pdMS_TO_TICKS(20));
+            continue;
+        }
+        if (was_paused) {
+            was_paused = false;
+            if (info.sample_rate) {
+                board_audio_open(info.sample_rate);
+            }
+        }
         if (rebuffering) {
             /* after an underrun, wait for a cushion before resuming */
             if (byte_ring_filled(s_ring) < PREBUFFER_BYTES / 2) {
@@ -805,6 +874,9 @@ void player_play(const station_t *st)
     s_st.bitrate_kbps = st->bitrate;
     s_st.revision = s_session * 1000;
     s_icy_has_title = false;
+    s_paused = false;
+    s_go_live = false;
+    s_title_count = 0;
     xSemaphoreGive(s_lock);
     xTaskNotifyGive(s_reader);
     nowplaying_track(st);
@@ -835,9 +907,33 @@ void player_stop(void)
     s_st.error[0] = 0;
     s_st.level = 0;
     s_st.revision++;
+    s_paused = false;
+    s_go_live = false;
+    s_title_count = 0;
     xSemaphoreGive(s_lock);
     xTaskNotifyGive(s_reader);
     nowplaying_track(NULL);
+}
+
+void player_pause(bool pause)
+{
+    xSemaphoreTake(s_lock, portMAX_DELAY);
+    if (s_req_play && s_paused != pause) {
+        s_paused = pause;
+        s_st.revision++;
+    }
+    xSemaphoreGive(s_lock);
+}
+
+void player_go_live(void)
+{
+    xSemaphoreTake(s_lock, portMAX_DELAY);
+    if (s_req_play) {
+        s_go_live = true;
+        s_paused = false;
+        s_st.revision++;
+    }
+    xSemaphoreGive(s_lock);
 }
 
 void player_set_volume(int volume)
@@ -863,11 +959,20 @@ void player_save_volume(void)
 
 void player_get_status(player_status_t *out)
 {
+    uint64_t in, played;
+    byte_ring_totals(s_ring, &in, &played);
+    size_t fill = (size_t)(in - played);
     xSemaphoreTake(s_lock, portMAX_DELAY);
+    if (!s_go_live) {
+        titles_apply_locked(played);
+    }
     *out = s_st;
+    out->paused = s_paused;
     xSemaphoreGive(s_lock);
-    size_t fill = byte_ring_filled(s_ring);
     out->buffer_pct = (uint8_t)(fill * 100 / byte_ring_size(s_ring));
+    /* the normal prebuffer cushion is not "behind live" */
+    uint32_t bytes_per_s = out->bitrate_kbps ? out->bitrate_kbps * 125u : 16000u;
+    out->behind_s = fill > PREBUFFER_BYTES * 2 ? (fill - PREBUFFER_BYTES) / bytes_per_s : 0;
 }
 
 bool player_last_station(station_t *out)

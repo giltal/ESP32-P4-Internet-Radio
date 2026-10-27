@@ -20,6 +20,7 @@ LV_FONT_DECLARE(font_wx_32);
 LV_FONT_DECLARE(font_wx_64);
 #define SYM_DROPLET "\xEF\x81\x83"  /* F043 */
 #define SYM_WIND    "\xEF\x9C\xAE"  /* F72E */
+#define SYM_CLOUD_SUN "\xEF\x9B\x84"  /* F6C4 */
 
 /* FontAwesome star: in the Noto fallback fonts, not in LVGL's symbol list */
 #define SYM_STAR   "\xEF\x80\x85"   /* U+F005 */

@@ -17,3 +17,7 @@ size_t byte_ring_read(byte_ring_t *r, uint8_t *data, size_t len, TickType_t time
 size_t byte_ring_filled(byte_ring_t *r);
 size_t byte_ring_size(byte_ring_t *r);
 void byte_ring_reset(byte_ring_t *r);
+/** Discard up to len of the oldest bytes (FIFO overflow while paused); returns how many. */
+size_t byte_ring_drop(byte_ring_t *r, size_t len);
+/** Running totals of bytes written and consumed (read or dropped) since creation. */
+void byte_ring_totals(byte_ring_t *r, uint64_t *in, uint64_t *out);
